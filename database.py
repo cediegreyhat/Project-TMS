@@ -217,7 +217,11 @@ class DatabaseManager:
     MAX_LOGIN_ATTEMPTS = 5
 
     def _too_many_attempts(self, username):
-        """Rate-limit check: block login after too many failed attempts."""
+        """Rate-limit check: block login after too many failed attempts.
+
+        Timestamps are stored/compared in ISO 8601 format so string comparison
+        is chronologically correct.
+        """
         cutoff = (
             datetime.datetime.now() - datetime.timedelta(minutes=self.LOGIN_ATTEMPT_WINDOW_MINUTES)
         ).isoformat()
@@ -231,7 +235,8 @@ class DatabaseManager:
 
     def _record_attempt(self, username):
         self._execute_query(
-            "INSERT INTO login_attempts (username) VALUES (?)", (username,)
+            "INSERT INTO login_attempts (username, attempted_at) VALUES (?, ?)",
+            (username, datetime.datetime.now().isoformat()),
         )
 
     def insert_user(self, username, password, name, age, email, is_admin=0):
