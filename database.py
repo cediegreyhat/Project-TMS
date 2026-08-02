@@ -113,12 +113,6 @@ class DatabaseManager:
                 is_admin INTEGER DEFAULT 0,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             );""",
-            """CREATE TABLE IF NOT EXISTS students (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT,
-                progress INTEGER,
-                working_hours INTEGER
-            );""",
             """CREATE TABLE IF NOT EXISTS transactions (
                 transaction_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 tool_id INTEGER,
@@ -260,7 +254,7 @@ class DatabaseManager:
     def authenticate(self, username, password):
         """Verify credentials against the bcrypt hash. Returns user dict or None.
 
-        Rate limiting applies here (unlike the lower-level get_user).
+        Rate limiting applies here.
         """
         if self._too_many_attempts(username):
             logger.warning("Login rate-limited for username %s", username)
@@ -282,12 +276,6 @@ class DatabaseManager:
             logger.error("Invalid hash format for user %s: %s", username, e)
         self._record_attempt(username)
         return None
-
-    def get_user(self, username, password):
-        """Legacy single-user login check (kept for CLI compat). Returns [user] or []."""
-        # For backwards compatibility, route through authenticate but keep shape.
-        user = self.authenticate(username, password)
-        return [user] if user else []
 
     # -- Tool CRUD --------------------------------------------------------------
     def insert_tool(self, name, category, condition, quantity, location):
@@ -336,20 +324,6 @@ class DatabaseManager:
             self.conn.rollback()
             return False
 
-    def update_tool_quantity(self, tool_id, new_quantity):
-        """Backward-compatible quantity-only update."""
-        try:
-            self._execute_query(
-                "UPDATE tools SET quantity = ? WHERE tool_id = ?",
-                (new_quantity, tool_id),
-            )
-            return self._execute_query(
-                "SELECT changes() AS c", fetch=True
-            )[0]["c"] > 0
-        except Exception as e:
-            logger.error("Error updating quantity for tool %s: %s", tool_id, e)
-            return False
-
     def delete_tool(self, tool_id):
         """Delete a tool by id. Returns True on success."""
         self.ensure_connection_open()
@@ -385,20 +359,6 @@ class DatabaseManager:
             self.conn.rollback()
             return False
 
-    def clear_users(self):
-        """Clear all users (destructive; use with care)."""
-        self.ensure_connection_open()
-        try:
-            with closing(self.conn.cursor()) as cursor:
-                cursor.execute("DELETE FROM users")
-                self.conn.commit()
-                logger.info("All users cleared from the database.")
-                return True
-        except Exception as e:
-            logger.error("Error clearing users: %s", e)
-            self.conn.rollback()
-            return False
-
     # -- Inventory queries --------------------------------------------------------
     def fetch_all_tools(self):
         return self._execute_query("SELECT * FROM tools", fetch=True)
@@ -420,10 +380,6 @@ class DatabaseManager:
             params.append(user_id)
         return self._execute_query(query, tuple(params), fetch=True)
 
-    def fetch_tools_by_condition(self, condition):
-        query = "SELECT * FROM tools WHERE LOWER(condition) = ?"
-        return self._execute_query(query, (condition.lower(),), fetch=True)
-
     def search_tool(self, keyword):
         """Case-insensitive partial search on name or category."""
         query = """
@@ -443,9 +399,6 @@ class DatabaseManager:
     def count_tools(self):
         rows = self._execute_query("SELECT COUNT(*) AS count FROM tools", fetch=True)
         return rows[0]["count"] if rows else 0
-
-    def view_all_tools(self):
-        return self.fetch_all_tools()
 
     # -- Borrow / return -----------------------------------------------------------
     def borrow_tool(self, tool_id, user_id, borrower_name, borrow_date):
@@ -552,11 +505,8 @@ class DatabaseManager:
 
 
 if __name__ == "__main__":
-    user_db = DatabaseManager("db/users.db")
     inventory_db = DatabaseManager("db/inventory.db")
-    user_db.check_and_add_default_data()
     inventory_db.check_and_add_default_data()
     tools = inventory_db.fetch_all_tools()
     logger.info("Tools fetched: %s", tools)
-    user_db.close()
     inventory_db.close()

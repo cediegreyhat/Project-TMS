@@ -2,12 +2,12 @@
 
 import datetime
 import getpass
-import os
 import traceback
 
 from colorama import Fore, Style, init
 
 from database import DatabaseManager
+from service import ServiceError, ToolService
 
 init(autoreset=True)
 
@@ -93,7 +93,7 @@ def require_admin(session):
     return True
 
 
-def handle_add_tool(db, session):
+def handle_add_tool(svc, session):
     try:
         name = get_valid_str("Enter tool name: ")
         category = get_valid_str("Enter tool category: ")
@@ -103,10 +103,10 @@ def handle_add_tool(db, session):
             condition = get_valid_str("Enter tool condition (Good/Fair/Poor): ").capitalize()
         quantity = get_valid_int("Enter quantity: ")
         location = get_valid_str("Enter location: ")
-        if db.add_tool(name, category, condition, quantity, location):
-            print(Fore.GREEN + f"Tool '{name}' added successfully!" + Style.RESET_ALL)
-        else:
-            print(Fore.RED + "Failed to add tool." + Style.RESET_ALL)
+        svc.add_tool(name, category, condition, quantity, location, actor=session.user_id)
+        print(Fore.GREEN + f"Tool '{name}' added successfully!" + Style.RESET_ALL)
+    except ServiceError as e:
+        print(Fore.RED + str(e) + Style.RESET_ALL)
     except Exception as e:
         print(Fore.RED + f"Error adding tool: {e}" + Style.RESET_ALL)
 
@@ -124,7 +124,7 @@ def handle_view_tools(db):
         print(Fore.RED + f"Error fetching tools: {e}" + Style.RESET_ALL)
 
 
-def handle_update_tool(db, session):
+def handle_update_tool(svc, session):
     try:
         tool_id = get_valid_int("Enter the Tool ID to update: ")
         print(Fore.YELLOW + "Leave fields blank to skip updating them." + Style.RESET_ALL)
@@ -139,25 +139,27 @@ def handle_update_tool(db, session):
         if not updates:
             print(Fore.YELLOW + "No updates provided. Operation cancelled." + Style.RESET_ALL)
             return
-        if db.update_tool(tool_id, **updates):
+        if svc.update_tool(tool_id, actor=session.user_id, **updates):
             print(Fore.GREEN + "Tool updated successfully!" + Style.RESET_ALL)
         else:
             print(Fore.YELLOW + "No changes made (tool not found or no valid fields).")
+    except ServiceError as e:
+        print(Fore.RED + str(e) + Style.RESET_ALL)
     except Exception as e:
         print(Fore.RED + f"Error updating tool: {e}" + Style.RESET_ALL)
 
 
-def handle_delete_tool(db, session):
+def handle_delete_tool(svc, session):
     try:
         tool_id = get_valid_int("Enter the Tool ID to delete: ")
         confirm = input(Fore.RED + f"Are you sure you want to delete tool {tool_id}? (y/N): " + Style.RESET_ALL).strip().lower()
         if confirm != "y":
             print(Fore.YELLOW + "Delete cancelled." + Style.RESET_ALL)
             return
-        if db.delete_tool(tool_id):
-            print(Fore.GREEN + f"Tool {tool_id} deleted successfully!" + Style.RESET_ALL)
-        else:
-            print(Fore.RED + f"Failed to delete tool {tool_id}." + Style.RESET_ALL)
+        svc.delete_tool(tool_id, actor=session.user_id)
+        print(Fore.GREEN + f"Tool {tool_id} deleted successfully!" + Style.RESET_ALL)
+    except ServiceError as e:
+        print(Fore.RED + str(e) + Style.RESET_ALL)
     except Exception as e:
         print(Fore.RED + f"Error deleting tool: {e}" + Style.RESET_ALL)
 
@@ -221,15 +223,14 @@ def handle_search_tools(db):
         print(Fore.RED + f"Error searching for tools: {e}" + Style.RESET_ALL)
 
 
-def handle_clear_data(db, session):
-    if not require_admin(session):
-        return
+def handle_clear_data(svc, session):
     confirmation = input(Fore.RED + "Type 'YES' to confirm clearing ALL tools and transactions: " + Style.RESET_ALL)
     if confirmation.upper() == "YES":
-        if db.clear_tables():
+        try:
+            svc.clear_inventory(session.user_id)
             print(Fore.GREEN + "All data cleared successfully." + Style.RESET_ALL)
-        else:
-            print(Fore.RED + "Failed to clear data." + Style.RESET_ALL)
+        except ServiceError as e:
+            print(Fore.RED + str(e) + Style.RESET_ALL)
     else:
         print(Fore.YELLOW + "Operation cancelled.")
 
@@ -301,6 +302,7 @@ def main_menu(session):
 
 if __name__ == "__main__":
     db = DatabaseManager("db/inventory.db")
+    svc = ToolService(db)
     db.check_and_add_default_data()
     print_banner()
     session = None
@@ -311,13 +313,13 @@ if __name__ == "__main__":
             main_menu(session)
             choice = get_menu_choice()
             if choice == "1":
-                handle_add_tool(db, session)
+                handle_add_tool(svc, session)
             elif choice == "2":
                 handle_view_tools(db)
             elif choice == "3":
-                handle_update_tool(db, session)
+                handle_update_tool(svc, session)
             elif choice == "4":
-                handle_delete_tool(db, session)
+                handle_delete_tool(svc, session)
             elif choice == "5":
                 handle_borrow_tool(db, session)
             elif choice == "6":
@@ -325,7 +327,7 @@ if __name__ == "__main__":
             elif choice == "7":
                 handle_search_tools(db)
             elif choice == "8":
-                handle_clear_data(db, session)
+                handle_clear_data(svc, session)
             elif choice == "9":
                 handle_execute_sql(db, session)
             elif choice == "10":

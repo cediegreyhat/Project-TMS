@@ -11,42 +11,16 @@ from database import DatabaseManager
 from service import AuthService, ServiceError, ToolService
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from colorama import Fore, Style
+
 
 RETURN_EVENT = "<Return>"
 
 VIEW_TOOLS_TITLE = "View Tools"
 
 
-
 ctk.set_appearance_mode("dark")  
 ctk.set_default_color_theme("dark-blue")
 
-
-class ToolTip:
-    def __init__(self, widget, text):
-        self.widget = widget
-        self.text = text
-        self.tipwindow = None
-        widget.bind("<Enter>", self.show_tip)
-        widget.bind("<Leave>", self.hide_tip)
-
-    def show_tip(self, event=None):
-        if self.tipwindow or not self.text:
-            return
-        x, y, _, _ = self.widget.bbox("insert")
-        x += self.widget.winfo_rootx() + 25
-        y += self.widget.winfo_rooty() + 20
-        self.tipwindow = tw = tk.Toplevel(self.widget)
-        tw.wm_overrideredirect(True)
-        tw.wm_geometry(f"+{x}+{y}")
-        label = tk.Label(tw, text=self.text, background="#23272f", foreground="#4f8cff", relief="solid", borderwidth=1)
-        label.pack()
-
-    def hide_tip(self, event=None):
-        if self.tipwindow:
-            self.tipwindow.destroy()
-            self.tipwindow = None
 
 class AdvancedToolTip:
     def __init__(self, widget):
