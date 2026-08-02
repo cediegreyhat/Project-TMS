@@ -1,33 +1,58 @@
+"""
+Project-LMS Modern Desktop Application
+======================================
+
+A sleek, responsive customtkinter GUI for the Learner's Tool Management System.
+
+Features:
+- Glassmorphic login/signup windows with background image support
+- Modern single-window dashboard with tabbed/inline view switching
+- Reusable asset integration (user profile avatar + dark/light background wallpapers)
+- Stat cards (Total Tools, Borrowed, Available, Categories)
+- Modern Treeview theme matching customtkinter dark theme
+- Interactive category breakdown donut chart (matplotlib)
+- Integrated search bar + status/category filters
+- Complete service layer delegation (AuthService + ToolService)
+- Clean, non-blocking dialogs for borrow/return/add/delete
+"""
+
 import datetime
 import os
 import tkinter as tk
-from tkinter import StringVar, ttk
+from tkinter import StringVar, messagebox, simpledialog, ttk
+
 import customtkinter as ctk
-from tkinter import messagebox
-from tkinter import simpledialog
-from PIL import Image, ImageTk, ImageDraw
-from matplotlib.figure import Figure
-from database import DatabaseManager
-from service import AuthService, ServiceError, ToolService
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+from PIL import Image, ImageDraw, ImageTk
 
+from database import DatabaseManager
+from service import AuthService, ServiceError, ToolService
 
 RETURN_EVENT = "<Return>"
-
-VIEW_TOOLS_TITLE = "View Tools"
-
-
-ctk.set_appearance_mode("dark")  
+ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
+
+# Theme Palette (Deep Navy / Glassmorphic)
+COLOR_BG_DARK = "#12161f"
+COLOR_CARD = "#1c212d"
+COLOR_CARD_BORDER = "#2e3545"
+COLOR_ACCENT = "#4f8cff"
+COLOR_ACCENT_HOVER = "#3b73e0"
+COLOR_TEXT_PRIMARY = "#f5f6fa"
+COLOR_TEXT_MUTED = "#a0a5b5"
+COLOR_DANGER = "#e05655"
+COLOR_DANGER_HOVER = "#c0392b"
+COLOR_SUCCESS = "#2ecc71"
 
 
 class AdvancedToolTip:
+    """Hover tooltip for treeview rows."""
+
     def __init__(self, widget):
         self.widget = widget
         self.tipwindow = None
-        self.text = ""
-        self.row_id = None
 
     def show(self, text, x, y):
         self.hide()
@@ -35,8 +60,15 @@ class AdvancedToolTip:
         tw.wm_overrideredirect(True)
         tw.wm_geometry(f"+{x}+{y}")
         label = tk.Label(
-            tw, text=text, background="#23272f", foreground="#4f8cff",
-            relief="solid", borderwidth=1, font=("Roboto", 11), justify="left", anchor="w"
+            tw,
+            text=text,
+            background="#23272f",
+            foreground=COLOR_ACCENT,
+            relief="solid",
+            borderwidth=1,
+            font=("Roboto", 10),
+            justify="left",
+            anchor="w",
         )
         label.pack(ipadx=8, ipady=4)
 
@@ -45,959 +77,795 @@ class AdvancedToolTip:
             self.tipwindow.destroy()
             self.tipwindow = None
 
+
 class LoginApp:
+    """Modern Glassmorphic Login & Registration Flow."""
+
     def __init__(self, db_path):
-        print("Initializing LoginApp...")
-        self.db_path = db_path  
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        self.db_path = db_path
+        os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
         self.db = DatabaseManager(self.db_path)
         self.auth = AuthService(self.db)
         self.create_login_window()
-        
-    def create_login_window(self):
-        print("Creating login window...")
 
-        # Get screen size for adaptive window
+    def create_login_window(self):
         root = tk.Tk()
-        screen_width = root.winfo_screenwidth()
-        screen_height = root.winfo_screenheight()
+        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
         root.destroy()
 
-        win_width = int(screen_width * 0.34)
-        win_height = int(screen_height * 0.48)
+        ww, wh = int(sw * 0.32), int(sh * 0.52)
+        ww, wh = max(420, ww), max(520, wh)
 
         self.login_window = ctk.CTk()
-        self.login_window.geometry(f'{win_width}x{win_height}')
-        self.login_window.title('Login | Project-LMS')
+        self.login_window.geometry(f"{ww}x{wh}")
+        self.login_window.title("Login | Project-LMS")
         self.login_window.resizable(False, False)
-        self.login_window.configure(bg="#181c24")
+        self.login_window.configure(bg=COLOR_BG_DARK)
 
-        # Center the window
-        x = (screen_width // 2) - (win_width // 2)
-        y = (screen_height // 2) - (win_height // 2)
+        # Center window
+        x, y = (sw // 2) - (ww // 2), (sh // 2) - (wh // 2)
         self.login_window.geometry(f"+{x}+{y}")
 
-        # Fade-in animation
-        self.login_window.attributes('-alpha', 0.0)
-        def fade_in(step=0):
-            alpha = min(1.0, step / 12)
-            self.login_window.attributes('-alpha', alpha)
-            if alpha < 1.0:
-                self.login_window.after(18, lambda: fade_in(step + 1))
-        fade_in()
+        # Set background wallpaper if present
+        bg_path = os.path.join("assets", "background_image.jpg")
+        if os.path.exists(bg_path):
+            try:
+                bg_img = Image.open(bg_path).resize((ww, wh), Image.Resampling.LANCZOS)
+                self.bg_photo = ImageTk.PhotoImage(bg_img)
+                bg_label = tk.Label(self.login_window, image=self.bg_photo, borderwidth=0)
+                bg_label.place(x=0, y=0, relwidth=1, relheight=1)
+            except Exception:
+                pass
 
-        # Glassy main frame with shadow
+        # Glassy Login Frame
         login_frame = ctk.CTkFrame(
-            self.login_window, corner_radius=22, fg_color="#23272f", border_width=2, border_color="#3a3f4b",
-            width=int(win_width*0.85), height=int(win_height*0.85)
+            self.login_window,
+            corner_radius=20,
+            fg_color=COLOR_CARD,
+            border_width=2,
+            border_color=COLOR_CARD_BORDER,
+            width=int(ww * 0.88),
+            height=int(wh * 0.88),
         )
         login_frame.place(relx=0.5, rely=0.5, anchor="center")
-        login_frame.update()
-        login_frame.place_configure(rely=1.2)  # Start off-screen
 
-        # Slide-in animation
-        def slide_in(step=0):
-            target = 0.5
-            start = 1.2
-            pos = start - (start - target) * (step / 12)
-            login_frame.place_configure(rely=pos)
-            if step < 12:
-                self.login_window.after(14, lambda: slide_in(step + 1))
-        slide_in()
+        logo = ctk.CTkLabel(login_frame, text="🛠️", font=("Arial", 42))
+        logo.pack(pady=(28, 2))
 
-        # Logo or Icon (optional)
-        logo = ctk.CTkLabel(login_frame, text="🔑", font=('Arial', int(win_height*0.13)))
-        logo.pack(pady=(int(win_height*0.04), 0))
-
-        # Title
-        title_label = ctk.CTkLabel(
-            login_frame, text="Welcome Back!", font=('Roboto', int(win_height * 0.09), 'bold'), text_color="#f5f6fa"
+        title = ctk.CTkLabel(
+            login_frame, text="Welcome Back", font=("Roboto", 24, "bold"), text_color=COLOR_TEXT_PRIMARY
         )
-        title_label.pack(pady=(int(win_height * 0.06), int(win_height * 0.01)))
+        title.pack(pady=(2, 2))
 
-        subtitle_label = ctk.CTkLabel(
-            login_frame, text="Sign in to continue", font=('Roboto', int(win_height * 0.035)), text_color="#b0b3b8"
+        sub = ctk.CTkLabel(
+            login_frame, text="Sign in to continue to Project-LMS", font=("Roboto", 13), text_color=COLOR_TEXT_MUTED
         )
-        subtitle_label.pack(pady=(0, int(win_height * 0.04)))
+        sub.pack(pady=(0, 20))
 
-        # Username Entry
+        # Username Field
         user_row = ctk.CTkFrame(login_frame, fg_color="transparent")
-        user_row.pack(fill="x", padx=32, pady=8)
-        user_icon = ctk.CTkLabel(user_row, text="👤", font=('Arial', 16), width=32)
-        user_icon.pack(side="left")
-        self.username_entry = ctk.CTkEntry(user_row, font=('Roboto', int(win_height * 0.035)), width=int(win_width * 0.5), placeholder_text="Username")
+        user_row.pack(fill="x", padx=32, pady=6)
+        ctk.CTkLabel(user_row, text="👤", font=("Arial", 16), width=32).pack(side="left")
+        self.username_entry = ctk.CTkEntry(
+            user_row, font=("Roboto", 14), placeholder_text="Username"
+        )
         self.username_entry.pack(side="left", fill="x", expand=True)
 
-        # Password Entry with visibility toggle
+        # Password Field
         pw_row = ctk.CTkFrame(login_frame, fg_color="transparent")
-        pw_row.pack(fill="x", padx=32, pady=8)
-        pw_icon = ctk.CTkLabel(pw_row, text="🔒", font=('Arial', 16), width=32)
-        pw_icon.pack(side="left")
-        self.password_entry = ctk.CTkEntry(pw_row, show='*', font=('Roboto', int(win_height * 0.035)), width=int(win_width * 0.4), placeholder_text="Password")
+        pw_row.pack(fill="x", padx=32, pady=6)
+        ctk.CTkLabel(pw_row, text="🔒", font=("Arial", 16), width=32).pack(side="left")
+        self.password_entry = ctk.CTkEntry(
+            pw_row, show="*", font=("Roboto", 14), placeholder_text="Password"
+        )
         self.password_entry.pack(side="left", fill="x", expand=True)
+
         self.show_pw = False
 
         def toggle_pw():
             self.show_pw = not self.show_pw
-            self.password_entry.configure(show='' if self.show_pw else '*')
-            pw_eye_btn.configure(text="👁️" if not self.show_pw else "🙈")
+            self.password_entry.configure(show="" if self.show_pw else "*")
+            pw_btn.configure(text="🙈" if self.show_pw else "👁️")
 
-        pw_eye_btn = ctk.CTkButton(pw_row, text="👁️", width=32, command=toggle_pw, fg_color="#444", hover_color="#666")
-        self.username_entry.bind(RETURN_EVENT, lambda event: self.password_entry.focus())
-        self.password_entry.bind(RETURN_EVENT, lambda event: self.login())
-        self.username_entry.bind(RETURN_EVENT, lambda event: self.password_entry.focus())
-        self.password_entry.bind(RETURN_EVENT, lambda event: self.login())
+        pw_btn = ctk.CTkButton(
+            pw_row, text="👁️", width=32, command=toggle_pw, fg_color="#333", hover_color="#555"
+        )
+        pw_btn.pack(side="left", padx=(4, 0))
 
-        # Error label (animated)
-        self.error_label = ctk.CTkLabel(login_frame, text="", font=('Roboto', int(win_height * 0.025)), text_color="red")
-        self.error_label.pack(pady=(5, 0))
+        self.error_label = ctk.CTkLabel(
+            login_frame, text="", font=("Roboto", 12), text_color=COLOR_DANGER
+        )
+        self.error_label.pack(pady=(6, 0))
 
         # Login Button
-        self.login_button = ctk.CTkButton(
-            login_frame, text='Login', font=('Roboto', int(win_height * 0.045), 'bold'),
-            command=self.login, width=int(win_width * 0.6), height=int(win_height * 0.09), corner_radius=12,
-            fg_color="#4f8cff", hover_color="#357ae8"
+        self.login_btn = ctk.CTkButton(
+            login_frame,
+            text="Sign In",
+            font=("Roboto", 15, "bold"),
+            command=self.login,
+            width=220,
+            height=40,
+            corner_radius=10,
+            fg_color=COLOR_ACCENT,
+            hover_color=COLOR_ACCENT_HOVER,
         )
-        self.login_button.pack(pady=(int(win_height * 0.04), int(win_height * 0.01)))
+        self.login_btn.pack(pady=(16, 8))
 
-        # Loading spinner (hidden by default)
-        self.spinner = ctk.CTkLabel(login_frame, text="⏳", font=('Arial', int(win_height * 0.04)), text_color="#aaa")
-        self.spinner.pack(pady=(0, 10))
-        self.spinner.pack_forget()
-
-        # Signup label
-        signup_label = ctk.CTkLabel(
-            login_frame, text="New User? Sign Up Here", font=('Arial', int(win_height * 0.025), 'underline'),
-            text_color="#4f8cff", cursor="hand2"
+        signup_link = ctk.CTkLabel(
+            login_frame,
+            text="New User? Create an Account",
+            font=("Roboto", 12, "underline"),
+            text_color=COLOR_ACCENT,
+            cursor="hand2",
         )
-        signup_label.pack(pady=(int(win_height * 0.02), int(win_height * 0.02)))
-        signup_label.bind("<Button-1>", self.signup_transition)
+        signup_link.pack(pady=(6, 16))
+        signup_link.bind("<Button-1>", self.signup_transition)
 
-        # Focus on username
         self.username_entry.focus_set()
-        self.login_window.bind('<Tab>', lambda e: self.password_entry.focus() if self.username_entry.focus_get() else self.username_entry.focus())
-        self.login_window.bind(RETURN_EVENT, lambda e: self.login())
-        self.login_window.bind('<Tab>', lambda e: self.password_entry.focus() if self.username_entry.focus_get() else self.username_entry.focus())
-        self.login_window.bind(RETURN_EVENT, lambda e: self.login())
-
-        # Set background image
-        bg_path = os.path.join("assets", "background_image.jpg")
-        if os.path.exists(bg_path):
-            bg_img = Image.open(bg_path)
-            bg_img = bg_img.resize((win_width, win_height))
-            self.bg_photo = ImageTk.PhotoImage(bg_img)
-            bg_label = tk.Label(self.login_window, image=self.bg_photo, borderwidth=0)
-            bg_label.place(x=0, y=0, relwidth=1, relheight=1)
-            # Raise the login frame above the background
-            login_frame.lift()
-
-        print("Entering Tkinter event loop...")
+        self.username_entry.bind(RETURN_EVENT, lambda e: self.password_entry.focus())
+        self.password_entry.bind(RETURN_EVENT, lambda e: self.login())
         self.login_window.mainloop()
 
     def login(self):
-        username = self.username_entry.get()
+        username = self.username_entry.get().strip()
         password = self.password_entry.get()
 
-        # Show spinner
-        self.spinner.pack()
-        self.login_window.update_idletasks()
-
         if not username or not password:
-            self.error_label.configure(text="Please fill in both fields")
-            self.animate_error()
-            self.spinner.pack_forget()
+            self.error_label.configure(text="Please enter both username and password")
             return
 
         try:
             user = self.auth.login(username, password)
-        except ServiceError as e:
-            self.error_label.configure(text=str(e))
-            self.animate_error()
-            self.spinner.pack_forget()
-            return
-
-        self.spinner.pack_forget()
-
-        if user:
-            user_dict = user
-            self.user_id = user_dict['id']
-            print(f"Login successful. User ID: {self.user_id}")
+            self.user_id = user["id"]
             self.login_window.destroy()
             ToolManagementApp(self.user_id, self.db, self.db_path)
-        else:
-            self.error_label.configure(text="Incorrect username or password.")
-            self.animate_error()
-
-    def animate_error(self):
-        # Simple shake animation for error label
-        for _ in range(2):
-            self.error_label.pack_configure(padx=10)
-            self.login_window.update()
-            self.error_label.pack_configure(padx=0)
-            self.login_window.update()
+        except ServiceError as e:
+            self.error_label.configure(text=str(e))
 
     def create_signup_window(self):
-        print("Creating signup window...")
         self.signup_window = ctk.CTk()
-        self.signup_window.geometry('420x600')
-        self.signup_window.title('Sign Up - Project-LMS')
+        self.signup_window.geometry("440x620")
+        self.signup_window.title("Sign Up | Project-LMS")
         self.signup_window.resizable(False, False)
-        self.signup_window.configure(bg="#181c24")
+        self.signup_window.configure(bg=COLOR_BG_DARK)
 
-        # Center the window
-        self.signup_window.eval('tk::PlaceWindow %s center' % self.signup_window.winfo_toplevel())
+        bg_path = os.path.join("assets", "background_image_light.jpg")
+        if os.path.exists(bg_path):
+            try:
+                bg_img = Image.open(bg_path).resize((440, 620), Image.Resampling.LANCZOS)
+                self.signup_bg_photo = ImageTk.PhotoImage(bg_img)
+                bg_label = tk.Label(self.signup_window, image=self.signup_bg_photo, borderwidth=0)
+                bg_label.place(x=0, y=0, relwidth=1, relheight=1)
+            except Exception:
+                pass
 
-        # Glassy main frame
         signup_frame = ctk.CTkFrame(
-            self.signup_window, corner_radius=24, fg_color="#23272f", border_width=2, border_color="#3a3f4b",
-            width=370, height=520
+            self.signup_window,
+            corner_radius=20,
+            fg_color=COLOR_CARD,
+            border_width=2,
+            border_color=COLOR_CARD_BORDER,
+            width=380,
+            height=540,
         )
         signup_frame.place(relx=0.5, rely=0.5, anchor="center")
 
-        # Title
-        title_label = ctk.CTkLabel(
-            signup_frame, text="Create Account", font=('Roboto', 26, 'bold'), text_color="#f5f6fa"
+        title = ctk.CTkLabel(
+            signup_frame, text="Create Account", font=("Roboto", 24, "bold"), text_color=COLOR_TEXT_PRIMARY
         )
-        title_label.pack(pady=(28, 2))
+        title.pack(pady=(24, 2))
 
-        subtitle_label = ctk.CTkLabel(
-            signup_frame, text="Join Project-LMS today!", font=('Roboto', 14), text_color="#b0b3b8"
+        sub = ctk.CTkLabel(
+            signup_frame, text="Join Project-LMS today", font=("Roboto", 13), text_color=COLOR_TEXT_MUTED
         )
-        subtitle_label.pack(pady=(0, 18))
+        sub.pack(pady=(0, 16))
 
-        # Entry fields with icons
-        entry_pad = {'padx': 24, 'pady': 6}
+        pad = {"padx": 24, "pady": 4}
 
-        # Username
-        user_row = ctk.CTkFrame(signup_frame, fg_color="transparent")
-        user_row.pack(fill="x", **entry_pad)
-        user_icon = ctk.CTkLabel(user_row, text="👤", font=('Arial', 16), width=32)
-        user_icon.pack(side="left")
-        self.signup_username_entry = ctk.CTkEntry(user_row, font=('Roboto', 14), width=220, placeholder_text="Username")
-        self.signup_username_entry.pack(side="left", fill="x", expand=True)
+        self.signup_username = ctk.CTkEntry(signup_frame, font=("Roboto", 13), placeholder_text="Username")
+        self.signup_username.pack(fill="x", **pad)
 
-        # Password
-        pw_row = ctk.CTkFrame(signup_frame, fg_color="transparent")
-        pw_row.pack(fill="x", **entry_pad)
-        pw_icon = ctk.CTkLabel(pw_row, text="🔒", font=('Arial', 16), width=32)
-        pw_icon.pack(side="left")
-        self.signup_password_entry = ctk.CTkEntry(pw_row, show='*', font=('Roboto', 14), width=180, placeholder_text="Password")
-        self.signup_password_entry.pack(side="left", fill="x", expand=True)
-        self.signup_show_pw = False
+        self.signup_pw = ctk.CTkEntry(signup_frame, show="*", font=("Roboto", 13), placeholder_text="Password")
+        self.signup_pw.pack(fill="x", **pad)
 
-        def toggle_signup_pw():
-            self.signup_show_pw = not self.signup_show_pw
-            self.signup_password_entry.configure(show='' if self.signup_show_pw else '*')
-            pw_eye_btn.configure(text="👁️" if not self.signup_show_pw else "🙈")
+        self.signup_cpw = ctk.CTkEntry(signup_frame, show="*", font=("Roboto", 13), placeholder_text="Confirm Password")
+        self.signup_cpw.pack(fill="x", **pad)
 
-        pw_eye_btn = ctk.CTkButton(pw_row, text="👁️", width=32, command=toggle_signup_pw, fg_color="#444", hover_color="#666")
-        pw_eye_btn.pack(side="left", padx=(4, 0))
+        self.signup_name = ctk.CTkEntry(signup_frame, font=("Roboto", 13), placeholder_text="Full Name")
+        self.signup_name.pack(fill="x", **pad)
 
-        # Confirm Password
-        cpw_row = ctk.CTkFrame(signup_frame, fg_color="transparent")
-        cpw_row.pack(fill="x", **entry_pad)
-        cpw_icon = ctk.CTkLabel(cpw_row, text="🔒", font=('Arial', 16), width=32)
-        cpw_icon.pack(side="left")
-        self.confirm_password_entry = ctk.CTkEntry(cpw_row, show='*', font=('Roboto', 14), width=180, placeholder_text="Confirm Password")
-        self.confirm_password_entry.pack(side="left", fill="x", expand=True)
-        self.signup_show_cpw = False
+        self.signup_age = ctk.CTkEntry(signup_frame, font=("Roboto", 13), placeholder_text="Age")
+        self.signup_age.pack(fill="x", **pad)
 
-        def toggle_signup_cpw():
-            self.signup_show_cpw = not self.signup_show_cpw
-            self.confirm_password_entry.configure(show='' if self.signup_show_cpw else '*')
-            cpw_eye_btn.configure(text="👁️" if not self.signup_show_cpw else "🙈")
+        self.signup_email = ctk.CTkEntry(signup_frame, font=("Roboto", 13), placeholder_text="Email Address")
+        self.signup_email.pack(fill="x", **pad)
 
-        cpw_eye_btn = ctk.CTkButton(cpw_row, text="👁️", width=32, command=toggle_signup_cpw, fg_color="#444", hover_color="#666")
-        cpw_eye_btn.pack(side="left", padx=(4, 0))
-
-        # Name
-        name_row = ctk.CTkFrame(signup_frame, fg_color="transparent")
-        name_row.pack(fill="x", **entry_pad)
-        name_icon = ctk.CTkLabel(name_row, text="📝", font=('Arial', 16), width=32)
-        name_icon.pack(side="left")
-        self.signup_name_entry = ctk.CTkEntry(name_row, font=('Roboto', 14), width=220, placeholder_text="Full Name")
-        self.signup_name_entry.pack(side="left", fill="x", expand=True)
-
-        # Age
-        age_row = ctk.CTkFrame(signup_frame, fg_color="transparent")
-        age_row.pack(fill="x", **entry_pad)
-        age_icon = ctk.CTkLabel(age_row, text="🎂", font=('Arial', 16), width=32)
-        age_icon.pack(side="left")
-        self.signup_age_entry = ctk.CTkEntry(age_row, font=('Roboto', 14), width=220, placeholder_text="Age")
-        self.signup_age_entry.pack(side="left", fill="x", expand=True)
-
-        # Email
-        email_row = ctk.CTkFrame(signup_frame, fg_color="transparent")
-        email_row.pack(fill="x", **entry_pad)
-        email_icon = ctk.CTkLabel(email_row, text="✉️", font=('Arial', 16), width=32)
-        email_icon.pack(side="left")
-        self.signup_email_entry = ctk.CTkEntry(email_row, font=('Roboto', 14), width=220, placeholder_text="Email")
-        self.signup_email_entry.pack(side="left", fill="x", expand=True)
-
-        # Error label
-        self.signup_error_label = ctk.CTkLabel(signup_frame, text="", font=('Roboto', 12), text_color="#ff4d4f", anchor="center")
-        self.signup_error_label.pack(pady=(6, 0))
-
-        # Sign Up Button
-        self.signup_button = ctk.CTkButton(
-            signup_frame, text='Sign Up', font=('Roboto', 16, 'bold'),
-            command=self.register_user, width=220, height=38, corner_radius=10,
-            fg_color="#4f8cff", hover_color="#357ae8"
+        self.signup_error = ctk.CTkLabel(
+            signup_frame, text="", font=("Roboto", 12), text_color=COLOR_DANGER
         )
-        self.signup_button.pack(pady=(18, 6))
+        self.signup_error.pack(pady=(6, 0))
 
-        # Back to Login Button
-        back_to_login_button = ctk.CTkButton(
-            signup_frame, text="Back to Login", font=('Roboto', 14),
-            command=self.back_to_login, width=220, fg_color="#23272f", hover_color="#444", text_color="#b0b3b8"
+        signup_btn = ctk.CTkButton(
+            signup_frame,
+            text="Register",
+            font=("Roboto", 15, "bold"),
+            command=self.register_user,
+            width=220,
+            height=38,
+            corner_radius=10,
+            fg_color=COLOR_ACCENT,
+            hover_color=COLOR_ACCENT_HOVER,
         )
-        back_to_login_button.pack(pady=(0, 10))
-        self.signup_username_entry.bind(RETURN_EVENT, lambda e: self.signup_password_entry.focus())
-        self.signup_password_entry.bind(RETURN_EVENT, lambda e: self.confirm_password_entry.focus())
-        self.confirm_password_entry.bind(RETURN_EVENT, lambda e: self.signup_name_entry.focus())
-        self.signup_name_entry.bind(RETURN_EVENT, lambda e: self.signup_age_entry.focus())
-        self.signup_age_entry.bind(RETURN_EVENT, lambda e: self.signup_email_entry.focus())
-        self.signup_email_entry.bind(RETURN_EVENT, lambda e: self.signup_button.invoke())
-        self.signup_age_entry.bind(RETURN_EVENT, lambda e: self.signup_email_entry.focus())
-        self.signup_email_entry.bind(RETURN_EVENT, lambda e: self.signup_button.invoke())
-        self.signup_window.bind('<Escape>', lambda e: self.back_to_login())
+        signup_btn.pack(pady=(12, 6))
 
-        self.signup_username_entry.focus_set()
+        back_btn = ctk.CTkButton(
+            signup_frame,
+            text="Back to Login",
+            font=("Roboto", 13),
+            command=self.back_to_login,
+            width=220,
+            fg_color="transparent",
+            hover_color="#333",
+            text_color=COLOR_TEXT_MUTED,
+        )
+        back_btn.pack(pady=(0, 16))
 
-        # Set background image
-        bg_path = os.path.join("assets", "background_image_light.jpg")
-        if os.path.exists(bg_path):
-            bg_img = Image.open(bg_path)
-            bg_img = bg_img.resize((420, 600))
-            self.signup_bg_photo = ImageTk.PhotoImage(bg_img)
-            bg_label = tk.Label(self.signup_window, image=self.signup_bg_photo, borderwidth=0)
-            bg_label.place(x=0, y=0, relwidth=1, relheight=1)
-            signup_frame.lift()
-
+        self.signup_username.focus_set()
         self.signup_window.mainloop()
 
     def register_user(self):
-        username = self.signup_username_entry.get().strip()
-        password = self.signup_password_entry.get()
-        confirm_password = self.confirm_password_entry.get()
-        name = self.signup_name_entry.get().strip()
-        age = self.signup_age_entry.get().strip()
-        email = self.signup_email_entry.get().strip()
-
-        if not username or not password or not confirm_password or not name or not age or not email:
-            self.signup_error_label.configure(text="Please fill in all fields")
-            return
+        u = self.signup_username.get().strip()
+        p = self.signup_pw.get()
+        cp = self.signup_cpw.get()
+        n = self.signup_name.get().strip()
+        a = self.signup_age.get().strip()
+        e = self.signup_email.get().strip()
 
         try:
-            self.auth.register(username, password, confirm_password, name, age, email)
-            self.signup_error_label.configure(text="Signup successful!", text_color="#4CAF50")
-            self.signup_window.after(800, self.back_to_login)
-        except ServiceError as e:
-            self.signup_error_label.configure(text=str(e), text_color="#ff4d4f")
+            self.auth.register(u, p, cp, n, a, e)
+            self.signup_error.configure(text="Signup successful! Returning to login...", text_color=COLOR_SUCCESS)
+            self.signup_window.after(1000, self.back_to_login)
+        except ServiceError as err:
+            self.signup_error.configure(text=str(err), text_color=COLOR_DANGER)
 
     def back_to_login(self):
         self.signup_window.destroy()
         self.create_login_window()
-            
+
     def signup_transition(self, event=None):
         self.login_window.destroy()
         self.create_signup_window()
 
 
 class ToolManagementApp:
+    """Remodeled Single-Window Dashboard Application."""
+
     def __init__(self, user_id, db, db_path):
-        print(f"Received user_id type: {type(user_id)} and value: {user_id}")
         self.user_id = user_id
-        self.db_path = db_path
         self.db = db
+        self.db_path = db_path
         self.tools = ToolService(db)
-        print(f"ToolManagementApp initialized with user_id: {self.user_id}")
         self.create_dashboard_window()
 
     def create_dashboard_window(self):
-        # Main Window
         self.window = ctk.CTk()
-        self.window.geometry('1280x800')
-        self.window.title('Project-LMS Dashboard')
-        self.window.configure(bg="#181c24")
+        self.window.geometry("1280x820")
+        self.window.title("Project-LMS | Modern Dashboard")
+        self.window.configure(bg=COLOR_BG_DARK)
 
-        # Sidebar
-        sidebar = ctk.CTkFrame(self.window, width=250, fg_color="#23272f", corner_radius=18, border_width=2, border_color="#3a3f4b")
-        sidebar.pack(side="left", fill="y", padx=18, pady=18)
-
-        # Profile Section
-        profile_image_path = "assets/user.png"
-        profile_image = Image.open(profile_image_path).resize((120, 120))
-        mask = Image.new("L", (120, 120), 0)
-        draw = ImageDraw.Draw(mask)
-        draw.ellipse((0, 0, 120, 120), fill=255)
-        profile_image.putalpha(mask)
-        self.profile_image_ctk = ctk.CTkImage(light_image=None, dark_image=profile_image)
-
-        profile_label = ctk.CTkLabel(sidebar, image=self.profile_image_ctk, text="")
-        profile_label.pack(pady=(30, 10))
-
-        user_info = self.db._execute_query("SELECT name, email FROM users WHERE id = ?", (self.user_id,), fetch=True)
-        user_name = user_info[0]['name'] if user_info else "User"
-        user_email = user_info[0]['email'] if user_info else ""
-        ctk.CTkLabel(sidebar, text=user_name, font=("Roboto", 18, "bold"), text_color="#f5f6fa").pack()
-        ctk.CTkLabel(sidebar, text=user_email, font=("Roboto", 12), text_color="#b0b3b8").pack(pady=(0, 18))
-
-        # Sidebar Buttons with icons
-        btn_style = {
-            "font": ("Roboto", 15),
-            "fg_color": "#23272f",
-            "hover_color": "#4f8cff",
-            "text_color": "#f5f6fa",
-            "corner_radius": 10,
-            "height": 38
-        }
-        self.borrow_button = ctk.CTkButton(sidebar, text="🔄  Borrow Tool", command=self.borrow_tool, **btn_style)
-        self.borrow_button.pack(pady=6, padx=20, fill="x")
-        self.add_tool_button = ctk.CTkButton(sidebar, text="➕  Add Tool", command=self.add_tool, **btn_style)
-        self.add_tool_button.pack(pady=6, padx=20, fill="x")
-        self.view_tools_button = ctk.CTkButton(sidebar, text="📋  View Tools", command=self.view_tools, **btn_style)
-        self.view_tools_button.pack(pady=6, padx=20, fill="x")
-        self.delete_tool_button = ctk.CTkButton(sidebar, text="🗑️  Delete Tool", command=self.delete_tool, **btn_style)
-        self.delete_tool_button.pack(pady=6, padx=20, fill="x")
-        self.return_tool_button = ctk.CTkButton(sidebar, text="↩️  Return Tool", command=self.return_tool, **btn_style)
-        self.return_tool_button.pack(pady=6, padx=20, fill="x")
-        self.logout_button = ctk.CTkButton(sidebar, text="🚪  Logout", fg_color="#d9534f", hover_color="#b52a1d", command=self.logout, font=("Roboto", 15, "bold"), corner_radius=10, height=38)
-        self.logout_button.pack(side="bottom", pady=20, padx=20, fill="x")
-
-        # Main Dashboard Area
-        dashboard_frame = ctk.CTkFrame(self.window, fg_color="#23272f", corner_radius=18, border_width=2, border_color="#3a3f4b")
-        dashboard_frame.pack(side="right", fill="both", expand=True, padx=18, pady=18)
-
-        # Dashboard Stats
-        self.show_dashboard_stats(dashboard_frame)
-
-        # Inventory Table Section
-        inventory_label = ctk.CTkLabel(dashboard_frame, text="Inventory Overview", font=("Roboto", 22, "bold"), text_color="#f5f6fa")
-        inventory_label.pack(pady=(18, 8))
-
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure("Treeview", background="#23272f", fieldbackground="#23272f", foreground="#f5f6fa", rowheight=32, font=("Roboto", 13))
-        style.configure("Treeview.Heading", background="#3a3f4b", foreground="#4f8cff", font=("Roboto", 14, "bold"))
-        style.map("Treeview", background=[("selected", "#4f8cff")])
-
-        self.inventory_table = ttk.Treeview(
-            dashboard_frame,
-            columns=("ID", "Name", "Category", "Condition", "Quantity", "Status"),
-            show="headings",
-            selectmode="browse"
+        # Main Layout: Left Sidebar + Right Workspace
+        self.sidebar = ctk.CTkFrame(
+            self.window, width=260, fg_color=COLOR_CARD, corner_radius=0, border_width=0
         )
-        self.inventory_table.pack(pady=10, padx=20, fill="both", expand=True)
+        self.sidebar.pack(side="left", fill="y")
+        self.sidebar.pack_propagate(False)
 
-        for col in self.inventory_table["columns"]:
-            self.inventory_table.heading(col, text=col, command=lambda col=col: self.sort_inventory(col))
-            self.inventory_table.column(col, width=140, anchor="center")
+        self._build_sidebar()
 
-        self.update_inventory_table()
+        self.workspace = ctk.CTkFrame(
+            self.window, fg_color=COLOR_BG_DARK, corner_radius=0
+        )
+        self.workspace.pack(side="right", fill="both", expand=True, padx=20, pady=20)
 
-        # Pie Chart Section
-        pie_chart_label = ctk.CTkLabel(dashboard_frame, text="Tool Categories Distribution", font=("Roboto", 20, "bold"), text_color="#f5f6fa")
-        pie_chart_label.pack(pady=(18, 8))
+        # Build workspace sections
+        self._build_stats_section()
+        self._build_controls_section()
+        self._build_table_section()
+        self._build_chart_section()
 
-        self.pie_chart_canvas = ctk.CTkFrame(dashboard_frame, fg_color="#23272f", corner_radius=18)
-        self.pie_chart_canvas.pack(pady=10, padx=20, fill="both", expand=True)
-
-        self.update_pie_chart()
+        self.refresh_dashboard()
         self.window.mainloop()
 
-    def show_dashboard_stats(self, parent):
-        # Fetch stats
-        tools = self.db.fetch_all_tools()
-        total_tools = len(tools)
-        borrowed = sum(1 for t in tools if t['status'] == 'borrowed')
-        available = sum(1 for t in tools if t['status'] == 'available')
-        categories = {t['category'] for t in tools}
-        stats_frame = ctk.CTkFrame(parent, fg_color="#23272f", corner_radius=14)
-        stats_frame.pack(pady=(18, 8), padx=20, fill="x")
-
-        stat_style = {"font": ("Roboto", 16, "bold"), "text_color": "#4f8cff"}
-        ctk.CTkLabel(stats_frame, text=f"Total Tools: {total_tools}", **stat_style).pack(side="left", padx=24)
-        ctk.CTkLabel(stats_frame, text=f"Borrowed: {borrowed}", **stat_style).pack(side="left", padx=24)
-        ctk.CTkLabel(stats_frame, text=f"Available: {available}", **stat_style).pack(side="left", padx=24)
-        ctk.CTkLabel(stats_frame, text=f"Categories: {len(categories)}", **stat_style).pack(side="left", padx=24)
-
-    def update_inventory_table(self):
-        # Clear existing data
-        for row in self.inventory_table.get_children():
-            self.inventory_table.delete(row)
-
-        # Fetch and insert new data
-        tools = self.db.fetch_all_tools()
-        for idx, tool in enumerate(tools):
-            borrowed_status = "Borrowed" if tool['status'] == 'borrowed' else "Available"
-            tag = "evenrow" if idx % 2 == 0 else "oddrow"
-            self.inventory_table.insert(
-                "", "end",
-                values=(
-                    tool['tool_id'],
-                    tool['name'],
-                    tool['category'],
-                    tool['condition'],
-                    tool['quantity'],
-                    borrowed_status
-                ),
-                tags=(tag,)
-            )
-        # Alternate row colors
-        self.inventory_table.tag_configure("evenrow", background="#23272f")
-        self.inventory_table.tag_configure("oddrow", background="#262b34")
-
-    def update_pie_chart(self):
-        if not (hasattr(self, 'pie_chart_canvas') and self.pie_chart_canvas):
-            return
-        for widget in self.pie_chart_canvas.winfo_children():
-            widget.destroy()
-
-        tools = self.db.fetch_all_tools()
-        categories = self._get_category_counts(tools)
-
-        if not categories:
-            label = ctk.CTkLabel(self.pie_chart_canvas, text="No data to display.", font=("Roboto", 16), text_color="#f5f6fa")
-            label.pack(expand=True)
-            return
-
-        colors = self._get_color_palette(len(categories))
-        fig, ax, wedges = self._draw_pie_chart(categories, colors)
-
-        fig.canvas.mpl_connect('button_press_event', lambda event: self._on_pie_click(event, wedges, categories))
-        fig.canvas.mpl_connect('motion_notify_event', lambda event: self._on_pie_hover(event, wedges, categories, ax, fig))
-
-        self._draw_pie_legend(ax, wedges, categories)
-        ax.axis('equal')
-        fig.tight_layout()
-
-        chart_canvas = FigureCanvasTkAgg(fig, self.pie_chart_canvas)
-        chart_canvas.draw()
-        chart_canvas.get_tk_widget().pack(fill="both", expand=True)
-
-    def _get_category_counts(self, tools):
-        categories = {}
-        for tool in tools:
-            category = tool['category']
-            categories[category] = categories.get(category, 0) + 1
-        return categories
-
-    def _get_color_palette(self, n):
-        color_palette = [
-            "#4f8cff", "#00c9a7", "#ffb347", "#ff5e57", "#a259ff", "#43e97b", "#f67280", "#36cfc9", "#f9d423"
-        ]
-        return [color_palette[i % len(color_palette)] for i in range(n)]
-
-    def _draw_pie_chart(self, categories, colors):
-        fig = Figure(figsize=(5.5, 3.5), dpi=100, facecolor="#23272f")
-        ax = fig.add_subplot(111)
-        wedges, _, _ = ax.pie(
-            categories.values(),
-            labels=None,
-            autopct='%1.1f%%',
-            startangle=140,
-            pctdistance=0.8,
-            colors=colors,
-            textprops={'color': "#f5f6fa", 'fontsize': 13, 'fontweight': 'bold'},
-            wedgeprops={'edgecolor': '#181c24', 'linewidth': 2, 'antialiased': True}
+    def _build_sidebar(self):
+        # User Avatar Profile
+        user_info = self.db._execute_query(
+            "SELECT name, email, is_admin FROM users WHERE id = ?", (self.user_id,), fetch=True
         )
-        centre_circle = plt.Circle((0, 0), 0.65, fc='#181c24', zorder=10)
-        ax.add_artist(centre_circle)
-        return fig, ax, wedges
+        name = user_info[0]["name"] if user_info else "User"
+        email = user_info[0]["email"] if user_info else ""
+        is_admin = bool(user_info[0].get("is_admin")) if user_info else False
 
-    def _on_pie_click(self, event, wedges, categories):
-        for i, wedge in enumerate(wedges):
-            if wedge.contains_point([event.x, event.y]):
-                category = list(categories.keys())[i]
-                filtered = [t for t in self.db.fetch_all_tools() if t['category'] == category]
-                self.update_tools_list(filtered)
-                break
+        profile_img_path = os.path.join("assets", "user.png")
+        if os.path.exists(profile_img_path):
+            try:
+                raw_img = Image.open(profile_img_path).resize((100, 100), Image.Resampling.LANCZOS)
+                mask = Image.new("L", (100, 100), 0)
+                draw = ImageDraw.Draw(mask)
+                draw.ellipse((0, 0, 100, 100), fill=255)
+                raw_img.putalpha(mask)
+                self.avatar_img = ctk.CTkImage(light_image=raw_img, dark_image=raw_img, size=(100, 100))
+                avatar_lbl = ctk.CTkLabel(self.sidebar, image=self.avatar_img, text="")
+                avatar_lbl.pack(pady=(28, 10))
+            except Exception:
+                pass
 
-    def _on_pie_hover(self, event, wedges, categories, ax, fig):
-        for i, wedge in enumerate(wedges):
-            if wedge.contains_point([event.x, event.y]):
-                ax.set_title(f"{list(categories.keys())[i]}: {list(categories.values())[i]} tools", color="#4f8cff", fontsize=15)
-                fig.canvas.draw_idle()
-                return
-        ax.set_title("")
-        fig.canvas.draw_idle()
+        ctk.CTkLabel(
+            self.sidebar, text=name, font=("Roboto", 18, "bold"), text_color=COLOR_TEXT_PRIMARY
+        ).pack()
 
-    def _draw_pie_legend(self, ax, wedges, categories):
+        role_badge = "ADMIN" if is_admin else "USER"
+        ctk.CTkLabel(
+            self.sidebar, text=f"[{role_badge}]  {email}", font=("Roboto", 11), text_color=COLOR_TEXT_MUTED
+        ).pack(pady=(0, 20))
+
+        # Divider
+        ctk.CTkFrame(self.sidebar, height=1, fg_color=COLOR_CARD_BORDER).pack(fill="x", padx=16, pady=(0, 20))
+
+        # Action Buttons
+        btn_opts = {
+            "font": ("Roboto", 14),
+            "fg_color": "transparent",
+            "hover_color": "#2c3345",
+            "text_color": COLOR_TEXT_PRIMARY,
+            "anchor": "w",
+            "height": 40,
+            "corner_radius": 8,
+        }
+
+        ctk.CTkButton(self.sidebar, text="🔄  Borrow Tool", command=self.action_borrow, **btn_opts).pack(fill="x", padx=16, pady=4)
+        ctk.CTkButton(self.sidebar, text="↩️  Return Tool", command=self.action_return, **btn_opts).pack(fill="x", padx=16, pady=4)
+        ctk.CTkButton(self.sidebar, text="➕  Add Tool", command=self.action_add, **btn_opts).pack(fill="x", padx=16, pady=4)
+        ctk.CTkButton(self.sidebar, text="🗑️  Delete Tool", command=self.action_delete, **btn_opts).pack(fill="x", padx=16, pady=4)
+
+        # Logout at bottom
+        ctk.CTkButton(
+            self.sidebar,
+            text="🚪  Logout",
+            font=("Roboto", 14, "bold"),
+            fg_color=COLOR_DANGER,
+            hover_color=COLOR_DANGER_HOVER,
+            command=self.logout,
+            height=38,
+            corner_radius=8,
+        ).pack(side="bottom", fill="x", padx=16, pady=24)
+
+    def _build_stats_section(self):
+        self.stats_frame = ctk.CTkFrame(self.workspace, fg_color="transparent")
+        self.stats_frame.pack(fill="x", pady=(0, 16))
+
+        self.stat_cards = {}
+        cards = [
+            ("total", "📦 Total Tools", "0", COLOR_ACCENT),
+            ("available", "✅ Available", "0", COLOR_SUCCESS),
+            ("borrowed", "🔄 Borrowed", "0", "#f39c12"),
+            ("categories", "🏷️ Categories", "0", "#9b59b6"),
+        ]
+
+        for idx, (key, title, init_val, accent_color) in enumerate(cards):
+            card = ctk.CTkFrame(
+                self.stats_frame,
+                fg_color=COLOR_CARD,
+                corner_radius=14,
+                border_width=1,
+                border_color=COLOR_CARD_BORDER,
+            )
+            card.pack(side="left", fill="both", expand=True, padx=(0 if idx == 0 else 10, 0))
+
+            ctk.CTkLabel(card, text=title, font=("Roboto", 13), text_color=COLOR_TEXT_MUTED).pack(
+                anchor="w", padx=16, pady=(14, 2)
+            )
+            val_lbl = ctk.CTkLabel(card, text=init_val, font=("Roboto", 24, "bold"), text_color=accent_color)
+            val_lbl.pack(anchor="w", padx=16, pady=(0, 14))
+            self.stat_cards[key] = val_lbl
+
+    def _build_controls_section(self):
+        ctrl = ctk.CTkFrame(self.workspace, fg_color="transparent")
+        ctrl.pack(fill="x", pady=(0, 12))
+
+        # Integrated Search
+        self.search_entry = ctk.CTkEntry(
+            ctrl,
+            placeholder_text="🔍 Search tools by name or category...",
+            font=("Roboto", 13),
+            height=36,
+            corner_radius=10,
+        )
+        self.search_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        self.search_entry.bind("<KeyRelease>", lambda e: self.on_search_keyup())
+
+        # Category filter dropdown
+        self.category_var = StringVar(value="All Categories")
+        self.category_menu = ctk.CTkOptionMenu(
+            ctrl,
+            variable=self.category_var,
+            values=["All Categories"],
+            command=lambda c: self.apply_filters(),
+            height=36,
+            corner_radius=10,
+            fg_color=COLOR_CARD,
+            button_color=COLOR_CARD_BORDER,
+        )
+        self.category_menu.pack(side="left", padx=(0, 10))
+
+        # Status filter dropdown
+        self.status_var = StringVar(value="All Statuses")
+        self.status_menu = ctk.CTkOptionMenu(
+            ctrl,
+            variable=self.status_var,
+            values=["All Statuses", "Available", "Borrowed"],
+            command=lambda s: self.apply_filters(),
+            height=36,
+            corner_radius=10,
+            fg_color=COLOR_CARD,
+            button_color=COLOR_CARD_BORDER,
+        )
+        self.status_menu.pack(side="left")
+
+    def _build_table_section(self):
+        table_card = ctk.CTkFrame(
+            self.workspace,
+            fg_color=COLOR_CARD,
+            corner_radius=14,
+            border_width=1,
+            border_color=COLOR_CARD_BORDER,
+        )
+        table_card.pack(fill="both", expand=True, pady=(0, 16))
+
+        # Treeview Styling
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure(
+            "Treeview",
+            background=COLOR_CARD,
+            fieldbackground=COLOR_CARD,
+            foreground=COLOR_TEXT_PRIMARY,
+            rowheight=32,
+            font=("Roboto", 11),
+            borderwidth=0,
+        )
+        style.configure(
+            "Treeview.Heading",
+            background="#252b38",
+            foreground=COLOR_ACCENT,
+            font=("Roboto", 12, "bold"),
+            relief="flat",
+        )
+        style.map("Treeview", background=[("selected", COLOR_ACCENT_HOVER)])
+
+        cols = ("ID", "Name", "Category", "Condition", "Quantity", "Location", "Status")
+        self.tree = ttk.Treeview(table_card, columns=cols, show="headings", selectmode="browse")
+        self.tree.pack(fill="both", expand=True, padx=14, pady=14)
+
+        for col in cols:
+            self.tree.heading(col, text=col, command=lambda c=col: self.sort_by_column(c))
+            width = 60 if col == "ID" else (160 if col == "Name" else 110)
+            self.tree.column(col, width=width, anchor="center")
+
+        self.tree.tag_configure("evenrow", background=COLOR_CARD)
+        self.tree.tag_configure("oddrow", background="#222836")
+
+        self.tooltip = AdvancedToolTip(self.tree)
+        self.tree.bind("<Motion>", self._on_tree_motion)
+        self.tree.bind("<Leave>", lambda e: self.tooltip.hide())
+
+    def _build_chart_section(self):
+        self.chart_card = ctk.CTkFrame(
+            self.workspace,
+            fg_color=COLOR_CARD,
+            corner_radius=14,
+            border_width=1,
+            border_color=COLOR_CARD_BORDER,
+            height=200,
+        )
+        self.chart_card.pack(fill="x")
+        self.chart_card.pack_propagate(False)
+
+    def refresh_dashboard(self):
+        all_tools = self.db.fetch_all_tools()
+
+        # Update Stat Cards
+        total_count = len(all_tools)
+        borrowed_count = sum(1 for t in all_tools if t["status"] == "borrowed" or t.get("borrower"))
+        available_count = sum(1 for t in all_tools if t["status"] == "available" and not t.get("borrower"))
+        categories = sorted({t["category"] for t in all_tools})
+
+        self.stat_cards["total"].configure(text=str(total_count))
+        self.stat_cards["available"].configure(text=str(available_count))
+        self.stat_cards["borrowed"].configure(text=str(borrowed_count))
+        self.stat_cards["categories"].configure(text=str(len(categories)))
+
+        # Update Category Filter Menu
+        curr_cat = self.category_var.get()
+        new_cats = ["All Categories"] + categories
+        self.category_menu.configure(values=new_cats)
+        if curr_cat not in new_cats:
+            self.category_var.set("All Categories")
+
+        self.apply_filters()
+        self._update_donut_chart(all_tools)
+
+    def apply_filters(self):
+        tools = self.db.fetch_all_tools()
+
+        # Keyword filter
+        query = self.search_entry.get().strip().lower()
+        if query:
+            tools = [
+                t for t in tools
+                if query in t["name"].lower() or query in t["category"].lower()
+            ]
+
+        # Category filter
+        cat = self.category_var.get()
+        if cat != "All Categories":
+            tools = [t for t in tools if t["category"] == cat]
+
+        # Status filter
+        st = self.status_var.get()
+        if st == "Available":
+            tools = [t for t in tools if t["status"] == "available" and not t.get("borrower")]
+        elif st == "Borrowed":
+            tools = [t for t in tools if t["status"] == "borrowed" or t.get("borrower")]
+
+        # Populate tree
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+
+        self._row_tooltips = {}
+        for idx, t in enumerate(tools):
+            status_text = "Borrowed" if (t["status"] == "borrowed" or t.get("borrower")) else "Available"
+            tag = "evenrow" if idx % 2 == 0 else "oddrow"
+            item_id = self.tree.insert(
+                "",
+                "end",
+                values=(
+                    t["tool_id"],
+                    t["name"],
+                    t["category"],
+                    t["condition"],
+                    t["quantity"],
+                    t.get("location", ""),
+                    status_text,
+                ),
+                tags=(tag,),
+            )
+            # Hover detail text
+            self._row_tooltips[item_id] = (
+                f"ID: {t['tool_id']} | {t['name']}\n"
+                f"Category: {t['category']} | Condition: {t['condition']}\n"
+                f"Qty: {t['quantity']} | Location: {t.get('location','')}\n"
+                f"Status: {status_text}"
+                + (f"\nBorrower: {t.get('borrower')} ({t.get('borrow_date')})" if t.get('borrower') else "")
+            )
+
+    def on_search_keyup(self):
+        self.apply_filters()
+
+    def sort_by_column(self, col):
+        items = [(self.tree.set(k, col), k) for k in self.tree.get_children("")]
+        try:
+            items.sort(key=lambda x: int(x[0]))
+        except ValueError:
+            items.sort(key=lambda x: str(x[0]).lower())
+        for idx, (_, k) in enumerate(items):
+            self.tree.move(k, "", idx)
+
+    def _on_tree_motion(self, event):
+        item = self.tree.identify_row(event.y)
+        if item and hasattr(self, "_row_tooltips") and item in self._row_tooltips:
+            x = self.tree.winfo_rootx() + event.x + 15
+            y = self.tree.winfo_rooty() + event.y + 10
+            self.tooltip.show(self._row_tooltips[item], x, y)
+        else:
+            self.tooltip.hide()
+
+    def _update_donut_chart(self, tools):
+        for w in self.chart_card.winfo_children():
+            w.destroy()
+
+        cat_counts = {}
+        for t in tools:
+            c = t["category"]
+            cat_counts[c] = cat_counts.get(c, 0) + 1
+
+        if not cat_counts:
+            ctk.CTkLabel(
+                self.chart_card, text="No inventory data for chart", font=("Roboto", 12), text_color=COLOR_TEXT_MUTED
+            ).pack(expand=True)
+            return
+
+        fig = Figure(figsize=(8, 1.8), dpi=100, facecolor=COLOR_CARD)
+        ax = fig.add_subplot(111)
+        colors = ["#4f8cff", "#2ecc71", "#f39c12", "#9b59b6", "#e74c3c", "#1abc9c", "#34495e"]
+
+        wedges, texts, autotexts = ax.pie(
+            cat_counts.values(),
+            labels=None,
+            autopct="%1.0f%%",
+            pctdistance=0.75,
+            colors=colors[: len(cat_counts)],
+            wedgeprops=dict(width=0.4, edgecolor=COLOR_CARD, linewidth=2),
+            textprops=dict(color=COLOR_TEXT_PRIMARY, fontsize=9, fontweight="bold"),
+        )
+
         ax.legend(
-            wedges, categories.keys(),
+            wedges,
+            cat_counts.keys(),
             title="Categories",
             loc="center left",
             bbox_to_anchor=(1, 0.5),
-            fontsize=12,
-            title_fontsize=13,
-            labelcolor="#f5f6fa",
-            frameon=False
+            fontsize=9,
+            title_fontsize=10,
+            labelcolor=COLOR_TEXT_PRIMARY,
+            frameon=False,
         )
+        ax.axis("equal")
+        fig.tight_layout()
 
-    def borrow_tool(self):
-        try:
-            available_tools = self.tools.available_tools()
-            if not available_tools:
-                messagebox.showwarning("No Tools Available", "There are no tools available to borrow.")
-                return
+        canvas = FigureCanvasTkAgg(fig, self.chart_card)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
 
-            tool_names = [tool['name'] for tool in available_tools]
-
-            borrow_tool_window = ctk.CTkToplevel(self.window)
-            borrow_tool_window.geometry("420x340")
-            borrow_tool_window.title("Borrow Tool")
-            borrow_tool_window.attributes('-topmost', True)
-            borrow_tool_window.configure(bg="#181c24")
-
-            borrow_tool_frame = ctk.CTkFrame(
-                borrow_tool_window, corner_radius=18, fg_color="#23272f", border_width=2, border_color="#3a3f4b"
-            )
-            borrow_tool_frame.pack(pady=24, padx=24, fill='both', expand=True)
-
-            title = ctk.CTkLabel(borrow_tool_frame, text="Borrow Tool", font=('Roboto', 20, 'bold'), text_color="#4f8cff")
-            title.pack(pady=(10, 18))
-
-            # Tool Dropdown
-            tool_row = ctk.CTkFrame(borrow_tool_frame, fg_color="transparent")
-            tool_row.pack(fill="x", pady=6)
-            tool_icon = ctk.CTkLabel(tool_row, text="🛠️", font=('Arial', 16), width=32)
-            tool_icon.pack(side="left")
-            tool_var = StringVar(borrow_tool_frame)
-            tool_var.set(tool_names[0])
-            tool_dropdown = ctk.CTkOptionMenu(tool_row, variable=tool_var, values=tool_names)
-            tool_dropdown.pack(side="left", fill="x", expand=True)
-
-            # Borrower's Name
-            borrower_row = ctk.CTkFrame(borrow_tool_frame, fg_color="transparent")
-            borrower_row.pack(fill="x", pady=6)
-            borrower_icon = ctk.CTkLabel(borrower_row, text="👤", font=('Arial', 16), width=32)
-            borrower_icon.pack(side="left")
-            borrower_entry = ctk.CTkEntry(borrower_row, font=('Roboto', 14), width=220, placeholder_text="Borrower's Name")
-            borrower_entry.pack(side="left", fill="x", expand=True)
-
-            # Borrow Date
-            date_row = ctk.CTkFrame(borrow_tool_frame, fg_color="transparent")
-            date_row.pack(fill="x", pady=6)
-            date_icon = ctk.CTkLabel(date_row, text="📅", font=('Arial', 16), width=32)
-            date_icon.pack(side="left")
-            date_entry = ctk.CTkEntry(date_row, font=('Roboto', 14), width=220, placeholder_text="Borrow Date (YYYY-MM-DD)")
-            date_entry.pack(side="left", fill="x", expand=True)
-
-            # Error label
-            error_label = ctk.CTkLabel(borrow_tool_frame, text="", font=('Roboto', 12), text_color="#ff4d4f")
-            error_label.pack(pady=(4, 0))
-
-            def borrow_selected_tool():
-                selected_tool_name = tool_var.get()
-                borrower_name = borrower_entry.get().strip()
-                borrow_date = date_entry.get().strip()
-
-                if not borrower_name or not borrow_date:
-                    error_label.configure(text="Please fill in all fields.")
-                    return
-
-                try:
-                    datetime.datetime.strptime(borrow_date, "%Y-%m-%d").date()
-                except ValueError:
-                    error_label.configure(text="Invalid date format. Use YYYY-MM-DD.")
-                    return
-
-                tool_id = next((tool['tool_id'] for tool in available_tools if tool['name'] == selected_tool_name), None)
-                if tool_id is None:
-                    error_label.configure(text="Selected tool not found.")
-                    return
-
-                user_id = self.user_id
-
-                if tool_id:
-                    try:
-                        self.tools.borrow_tool(tool_id, self.user_id, borrow_date)
-                        messagebox.showinfo("Success", f"'{selected_tool_name}' borrowed.")
-                        borrow_tool_window.destroy()
-                        self.update_inventory_table()
-                        self.update_pie_chart()
-                    except ServiceError as e:
-                        error_label.configure(text=str(e))
-                    except Exception as e:
-                        error_label.configure(text=f"Failed to borrow tool: {e}")
-
-            # Buttons
-            btn_row = ctk.CTkFrame(borrow_tool_frame, fg_color="transparent")
-            btn_row.pack(pady=(18, 0))
-            borrow_button = ctk.CTkButton(btn_row, text="Borrow", command=borrow_selected_tool, width=120, fg_color="#4f8cff", hover_color="#357ae8")
-            borrow_button.pack(side="left", padx=8)
-            close_button = ctk.CTkButton(btn_row, text="Close", command=borrow_tool_window.destroy, width=120, fg_color="#23272f", hover_color="#444")
-            close_button.pack(side="left", padx=8)
-            borrower_entry.bind(RETURN_EVENT, lambda event: date_entry.focus_set())
-            date_entry.bind(RETURN_EVENT, lambda event: borrow_button.invoke())
-            borrower_entry.bind(RETURN_EVENT, lambda event: date_entry.focus_set())
-            date_entry.bind(RETURN_EVENT, lambda event: borrow_button.invoke())
-
-        except Exception as e:
-            messagebox.showerror("Error", f"An error occurred: {e}")
-
-    def delete_tool(self):
-        selected_item = self.inventory_table.selection()
-        if not selected_item:
-            messagebox.showwarning("No Tool Selected", "Please select a tool to delete.")
+    # -- Action Dialogs --------------------------------------------------------
+    def action_borrow(self):
+        available = self.tools.available_tools()
+        if not available:
+            messagebox.showwarning("Borrow Tool", "No tools are currently available to borrow.")
             return
 
-        selected_tool = self.inventory_table.item(selected_item, 'values')
-        tool_id = selected_tool[0]
+        tool_names = [t["name"] for t in available]
+        top = ctk.CTkToplevel(self.window)
+        top.geometry("380x280")
+        top.title("Borrow Tool")
+        top.attributes("-topmost", True)
+        top.configure(bg=COLOR_BG_DARK)
 
-        confirm = messagebox.askyesno("Confirm Deletion", f"Are you sure you want to delete the tool '{selected_tool[1]}'?")
-        if confirm:
+        frame = ctk.CTkFrame(top, fg_color=COLOR_CARD, corner_radius=14, border_width=1, border_color=COLOR_CARD_BORDER)
+        frame.pack(fill="both", expand=True, padx=16, pady=16)
+
+        ctk.CTkLabel(frame, text="Select Tool to Borrow", font=("Roboto", 16, "bold"), text_color=COLOR_ACCENT).pack(pady=(12, 16))
+
+        tool_var = StringVar(value=tool_names[0])
+        ctk.CTkOptionMenu(frame, variable=tool_var, values=tool_names, width=280).pack(pady=8)
+
+        err_lbl = ctk.CTkLabel(frame, text="", font=("Roboto", 11), text_color=COLOR_DANGER)
+        err_lbl.pack(pady=4)
+
+        def do_borrow():
+            name = tool_var.get()
+            selected = next((t for t in available if t["name"] == name), None)
+            if not selected:
+                err_lbl.configure(text="Selected tool not found")
+                return
             try:
-                self.tools.delete_tool(tool_id, actor=self.user_id)
-                messagebox.showinfo("Tool Deleted", f"'{selected_tool[1]}' has been deleted from the inventory.")
-                self.update_inventory_table()
-                self.update_pie_chart()
-            except ServiceError as e:
-                messagebox.showerror("Access Denied", str(e))
-            
-    def get_tool_columns(self):
-        # Fetch column names from the database schema
-        columns_info = self.db._execute_query("PRAGMA table_info(tools)", fetch=True)
-        # Exclude internal columns if needed
-        columns = [col['name'] for col in columns_info if col['name'] != 'tool_id']
-        # Always show tool_id first
-        return ['tool_id'] + columns
+                self.tools.borrow_tool(selected["tool_id"], self.user_id)
+                top.destroy()
+                messagebox.showinfo("Success", f"'{name}' borrowed successfully!")
+                self.refresh_dashboard()
+            except ServiceError as err:
+                err_lbl.configure(text=str(err))
 
-    def view_tools(self):
-        self.current_page = 1
-        self.page_size = 20
-        try:
-            view_window = ctk.CTkToplevel(self.window)
-            view_window.title(VIEW_TOOLS_TITLE)
-            view_window.geometry("900x520")
-            view_window.attributes("-topmost", True)
-            view_window.configure(bg="#181c24")
+        ctk.CTkButton(frame, text="Confirm Borrow", command=do_borrow, fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER, width=200).pack(pady=12)
 
-            view_frame = ctk.CTkFrame(view_window, corner_radius=18, fg_color="#23272f", border_width=2, border_color="#3a3f4b")
-            view_frame.pack(pady=18, padx=18, fill="both", expand=True)  
-            title_label = ctk.CTkLabel(view_frame, text=VIEW_TOOLS_TITLE, font=("Roboto", 20, "bold"), text_color="#4f8cff")
-            title_label.pack(pady=10)
+    def action_return(self):
+        borrowed = self.tools.my_borrowed_tools(self.user_id)
+        if not borrowed:
+            messagebox.showwarning("Return Tool", "You have no borrowed tools to return.")
+            return
 
-            # Dynamic columns
-            columns = self.get_tool_columns()
-            self.tools_listbox = ttk.Treeview(view_frame, columns=columns, show="headings")
-            self.tools_listbox.pack(pady=10, padx=20, fill="both", expand=True)
+        tool_names = [t["name"] for t in borrowed]
+        top = ctk.CTkToplevel(self.window)
+        top.geometry("380x280")
+        top.title("Return Tool")
+        top.attributes("-topmost", True)
 
-            for col in columns:
-                self.tools_listbox.heading(col, text=col.title(), command=lambda c=col: self.sort_tools_list(c))
-                self.tools_listbox.column(col, width=120, anchor="center")
+        frame = ctk.CTkFrame(top, fg_color=COLOR_CARD, corner_radius=14, border_width=1, border_color=COLOR_CARD_BORDER)
+        frame.pack(fill="both", expand=True, padx=16, pady=16)
 
-            # Pagination buttons
-            next_btn = ctk.CTkButton(view_frame, text="Next", command=self.next_page)
-            prev_btn = ctk.CTkButton(view_frame, text="Previous", command=self.prev_page)
-            prev_btn.pack(side="left", padx=10)
-            next_btn.pack(side="left", padx=10)
+        ctk.CTkLabel(frame, text="Select Tool to Return", font=("Roboto", 16, "bold"), text_color=COLOR_ACCENT).pack(pady=(12, 16))
 
-            self.update_tools_list(self.db.fetch_tools_paginated(self.current_page, self.page_size))
-        except Exception as e:
-            messagebox.showerror("Error", f"An error occurred while viewing tools: {e}")
+        tool_var = StringVar(value=tool_names[0])
+        ctk.CTkOptionMenu(frame, variable=tool_var, values=tool_names, width=280).pack(pady=8)
 
-    def update_tools_list(self, tools=None):
-        columns = self.get_tool_columns()
-        self._clear_tools_listbox()
-        if tools is None:
-            tools = self.db.fetch_all_tools()
-        for tool in tools:
-            self.tools_listbox.insert("", "end", values=[tool.get(col, "") for col in columns])
-        self._set_tooltips(tools)
+        err_lbl = ctk.CTkLabel(frame, text="", font=("Roboto", 11), text_color=COLOR_DANGER)
+        err_lbl.pack(pady=4)
 
-    def _clear_tools_listbox(self):
-        for item in self.tools_listbox.get_children():
-            self.tools_listbox.delete(item)
-
-    def _set_tooltips(self, tools):
-        self._tooltips = {}
-        for iid, tool in zip(self.tools_listbox.get_children(), tools):
-            details = "\n".join(f"{col.title()}: {tool.get(col, '')}" for col in self.get_tool_columns())
-            self._tooltips[iid] = details
-        self._adv_tooltip = AdvancedToolTip(self.tools_listbox)
-        self.tools_listbox.bind("<Motion>", self._on_tools_listbox_motion)
-        self.tools_listbox.bind("<Leave>", lambda e: self._adv_tooltip.hide())
-
-    def _on_tools_listbox_motion(self, event):
-        region = self.tools_listbox.identify("region", event.x, event.y)
-        row_id = self.tools_listbox.identify_row(event.y)
-        if region == "cell" and row_id and row_id in self._tooltips:
-            x = self.tools_listbox.winfo_rootx() + event.x + 20
-            y = self.tools_listbox.winfo_rooty() + event.y + 10
-            if getattr(self, "_active_tooltip_row", None) != row_id:
-                self._adv_tooltip.show(self._tooltips[row_id], x, y)
-                self._active_tooltip_row = row_id
-        else:
-            self._adv_tooltip.hide()
-            self._active_tooltip_row = None
-
-    def next_page(self):
-        total = self.db.count_tools()
-        if self.current_page * self.page_size < total:
-            self.current_page += 1
-            self.update_tools_list(self.db.fetch_tools_paginated(self.current_page, self.page_size))
-
-    def prev_page(self):
-        if self.current_page > 1:
-            self.current_page -= 1
-            self.update_tools_list(self.db.fetch_tools_paginated(self.current_page, self.page_size))
-
-    def return_tool(self):
-        try:
-            # Fetch only tools this user actually borrowed (ownership-scoped).
-            borrowed_tools = self.tools.my_borrowed_tools(self.user_id)
-            print(f"Borrowed tools: {borrowed_tools}")
-
-            if not borrowed_tools:
-                messagebox.showwarning("No Borrowed Tools", "There are no borrowed tools to return.")
+        def do_return():
+            name = tool_var.get()
+            selected = next((t for t in borrowed if t["name"] == name), None)
+            if not selected:
+                err_lbl.configure(text="Selected tool not found")
                 return
+            try:
+                self.tools.return_tool(selected["tool_id"], self.user_id)
+                top.destroy()
+                messagebox.showinfo("Success", f"'{name}' returned successfully!")
+                self.refresh_dashboard()
+            except ServiceError as err:
+                err_lbl.configure(text=str(err))
 
-            tool_names = [tool['name'] for tool in borrowed_tools]
-            tool_name = simpledialog.askstring(
-                "Return Tool",
-                f"Borrowed tools: \n{', '.join(tool_names)}\n\nEnter the tool name you want to return:"
-            )
+        ctk.CTkButton(frame, text="Confirm Return", command=do_return, fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER, width=200).pack(pady=12)
 
-            if tool_name and tool_name in tool_names:
-                tool_id = borrowed_tools[tool_names.index(tool_name)]['tool_id']
-                try:
-                    # Ownership is verified inside ToolService.return_tool().
-                    self.tools.return_tool(tool_id, self.user_id)
-                    messagebox.showinfo("Tool Returned", f"'{tool_name}' has been returned.")
-                    self.update_inventory_table()
-                    self.update_pie_chart()
-                except ServiceError as e:
-                    messagebox.showerror("Return Failed", str(e))
-            else:
-                messagebox.showerror("Invalid Tool", "The selected tool is not valid for return.")
-        except Exception as e:
-            messagebox.showerror("Error", f"An error occurred while returning the tool: {e}")
+    def action_add(self):
+        top = ctk.CTkToplevel(self.window)
+        top.geometry("400x420")
+        top.title("Add New Tool")
+        top.attributes("-topmost", True)
 
-    def search_tool(self):
-        tool_name = simpledialog.askstring("Search Tool", "Enter the name of the tool you want to search:")
+        frame = ctk.CTkFrame(top, fg_color=COLOR_CARD, corner_radius=14, border_width=1, border_color=COLOR_CARD_BORDER)
+        frame.pack(fill="both", expand=True, padx=16, pady=16)
 
-        if tool_name:
-            tools = self.db.search_tool(tool_name)
-            if tools:
-                tool_list = '\n'.join([f"{tool[1]}: {tool[2]}" for tool in tools])
-                messagebox.showinfo("Search Results", f"Found tools: \n{tool_list}")
-            else:
-                messagebox.showinfo("Search Results", "No tools found.")
-                
-    def add_tool(self):
-        add_tool_window = ctk.CTkToplevel(self.window)
-        add_tool_window.geometry("420x420")
-        add_tool_window.title("Add New Tool")
-        add_tool_window.attributes('-topmost', True)
-        add_tool_window.configure(bg="#181c24")
+        ctk.CTkLabel(frame, text="Add New Inventory Item", font=("Roboto", 16, "bold"), text_color=COLOR_ACCENT).pack(pady=(10, 12))
 
-        # Glassy frame
-        add_tool_frame = ctk.CTkFrame(
-            add_tool_window, corner_radius=18, fg_color="#23272f", border_width=2, border_color="#3a3f4b"
-        )
-        add_tool_frame.pack(pady=24, padx=24, fill='both', expand=True)
+        pad = {"fill": "x", "padx": 20, "pady": 4}
+        e_name = ctk.CTkEntry(frame, placeholder_text="Tool Name", font=("Roboto", 13))
+        e_name.pack(**pad)
 
-        title = ctk.CTkLabel(add_tool_frame, text="Add New Tool", font=('Roboto', 20, 'bold'), text_color="#4f8cff")
-        title.pack(pady=(10, 18))
+        e_cat = ctk.CTkEntry(frame, placeholder_text="Category", font=("Roboto", 13))
+        e_cat.pack(**pad)
 
-        entry_pad = {'padx': 12, 'pady': 6}
+        e_cond = ctk.CTkEntry(frame, placeholder_text="Condition (Good/Fair/Poor)", font=("Roboto", 13))
+        e_cond.pack(**pad)
 
-        # Tool Name
-        name_row = ctk.CTkFrame(add_tool_frame, fg_color="transparent")
-        name_row.pack(fill="x", **entry_pad)
-        name_icon = ctk.CTkLabel(name_row, text=" ", font=('Arial', 16), width=32)
-        name_icon.pack(side="left")
-        name_entry = ctk.CTkEntry(name_row, font=('Roboto', 14), width=220, placeholder_text="Tool Name")
-        name_entry.pack(side="left", fill="x", expand=True)
+        e_qty = ctk.CTkEntry(frame, placeholder_text="Quantity", font=("Roboto", 13))
+        e_qty.pack(**pad)
 
-        # Category
-        cat_row = ctk.CTkFrame(add_tool_frame, fg_color="transparent")
-        cat_row.pack(fill="x", **entry_pad)
-        cat_icon = ctk.CTkLabel(cat_row, text=" ", font=('Arial', 16), width=32)
-        cat_icon.pack(side="left")
-        category_entry = ctk.CTkEntry(cat_row, font=('Roboto', 14), width=220, placeholder_text="Category")
-        category_entry.pack(side="left", fill="x", expand=True)
+        e_loc = ctk.CTkEntry(frame, placeholder_text="Location / Shelf", font=("Roboto", 13))
+        e_loc.pack(**pad)
 
-        # Condition
-        cond_row = ctk.CTkFrame(add_tool_frame, fg_color="transparent")
-        cond_row.pack(fill="x", **entry_pad)
-        cond_icon = ctk.CTkLabel(cond_row, text=" ", font=('Arial', 16), width=32)
-        cond_icon.pack(side="left")
-        condition_entry = ctk.CTkEntry(cond_row, font=('Roboto', 14), width=220, placeholder_text="Condition")
-        condition_entry.pack(side="left", fill="x", expand=True)
+        err_lbl = ctk.CTkLabel(frame, text="", font=("Roboto", 11), text_color=COLOR_DANGER)
+        err_lbl.pack(pady=2)
 
-        # Quantity
-        qty_row = ctk.CTkFrame(add_tool_frame, fg_color="transparent")
-        qty_row.pack(fill="x", **entry_pad)
-        qty_icon = ctk.CTkLabel(qty_row, text=" ", font=('Arial', 16), width=32)
-        qty_icon.pack(side="left")
-        quantity_entry = ctk.CTkEntry(qty_row, font=('Roboto', 14), width=220, placeholder_text="Quantity")
-        quantity_entry.pack(side="left", fill="x", expand=True)
-
-        # Location
-        loc_row = ctk.CTkFrame(add_tool_frame, fg_color="transparent")
-        loc_row.pack(fill="x", **entry_pad)
-        loc_icon = ctk.CTkLabel(loc_row, text=" ", font=('Arial', 16), width=32)
-        loc_icon.pack(side="left")
-        location_entry = ctk.CTkEntry(loc_row, font=('Roboto', 14), width=220, placeholder_text="Location")
-        location_entry.pack(side="left", fill="x", expand=True)
-
-        # Error label
-        error_label = ctk.CTkLabel(add_tool_frame, text="", font=('Roboto', 12), text_color="#ff4d4f")
-        error_label.pack(pady=(4, 0))
-
-        def save_tool():
-            tool_name = name_entry.get().strip()
-            tool_category = category_entry.get().strip()
-            tool_condition = condition_entry.get().strip()
-            tool_quantity = quantity_entry.get().strip()
-            tool_location = location_entry.get().strip()
-
-            if not tool_name or not tool_category or not tool_condition or not tool_quantity or not tool_location:
-                error_label.configure(text="Please fill in all fields.")
-                return
-
+        def do_add():
             try:
                 self.tools.add_tool(
-                    tool_name, tool_category, tool_condition, tool_quantity, tool_location, actor=self.user_id
+                    e_name.get(),
+                    e_cat.get(),
+                    e_cond.get(),
+                    e_qty.get(),
+                    e_loc.get(),
+                    actor=self.user_id,
                 )
-                # Remove always-on-top so messagebox appears above
-                add_tool_window.attributes('-topmost', False)
-                self.window.lift()  # Bring main window to front (optional)
-                messagebox.showinfo("Success", f"{tool_name} added successfully.", parent=add_tool_window)
-                add_tool_window.destroy()
-                self.update_inventory_table()
-                self.update_pie_chart()
-            except ServiceError as e:
-                error_label.configure(text=str(e))
-            except Exception as e:
-                error_label.configure(text=f"Failed to add tool: {e}")
+                top.destroy()
+                messagebox.showinfo("Success", f"Tool '{e_name.get().strip()}' added!")
+                self.refresh_dashboard()
+            except ServiceError as err:
+                err_lbl.configure(text=str(err))
 
-        # Buttons
-        btn_row = ctk.CTkFrame(add_tool_frame, fg_color="transparent")
-        btn_row.pack(pady=(18, 0))
-        save_button = ctk.CTkButton(btn_row, text="Save", command=save_tool, width=120, fg_color="#4f8cff", hover_color="#357ae8")
-        save_button.pack(side="left", padx=8)
-        close_button = ctk.CTkButton(btn_row, text="Close", command=add_tool_window.destroy, width=120, fg_color="#23272f", hover_color="#444")
-        close_button.pack(side="left", padx=8)
-        name_entry.bind(RETURN_EVENT, lambda event: category_entry.focus_set())
-        category_entry.bind(RETURN_EVENT, lambda event: condition_entry.focus_set())
-        condition_entry.bind(RETURN_EVENT, lambda event: quantity_entry.focus_set())
-        quantity_entry.bind(RETURN_EVENT, lambda event: location_entry.focus_set())
-        location_entry.bind(RETURN_EVENT, lambda event: save_button.invoke())
-        quantity_entry.bind(RETURN_EVENT, lambda event: location_entry.focus_set())
-        location_entry.bind(RETURN_EVENT, lambda event: save_button.invoke())
+        ctk.CTkButton(frame, text="Save Tool", command=do_add, fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER, width=200).pack(pady=10)
+
+    def action_delete(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showwarning("Delete Tool", "Please select a tool from the table to delete.")
+            return
+
+        values = self.tree.item(sel[0], "values")
+        tool_id, tool_name = values[0], values[1]
+
+        if messagebox.askyesno("Confirm Deletion", f"Are you sure you want to delete '{tool_name}' (ID: {tool_id})?"):
+            try:
+                self.tools.delete_tool(tool_id, actor=self.user_id)
+                messagebox.showinfo("Success", f"Tool '{tool_name}' deleted.")
+                self.refresh_dashboard()
+            except ServiceError as err:
+                messagebox.showerror("Access Denied", str(err))
 
     def logout(self):
         self.window.destroy()
         LoginApp(self.db_path)
 
 
-if __name__ == '__main__':
-    db_path = './db/inventory.db'
+if __name__ == "__main__":
+    db_path = "./db/inventory.db"
     LoginApp(db_path)
-
-
-
