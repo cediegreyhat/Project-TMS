@@ -15,6 +15,11 @@ test_*.db
 # Scratch validation scripts
 _*_validate.py
 
+# Local planning / audit documents (kept local, not pushed)
+FEATURE_INTEGRATION_PLAN.md
+HERMES_TODO.md
+SECURITY_FIXES_SUMMARY.md
+
 # OS
 .DS_Store
 Thumbs.db
