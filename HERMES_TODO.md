@@ -217,7 +217,7 @@ None of these are configurable or themed.
 
 ---
 
-## 7. Immediate Risks (Do Not Modify Yet)
+## 8. Immediate Risks (Do Not Modify Yet)
 
 1. **CLI `handle_return_tool` will crash** — `db.return_tool(tool_id)` missing `user_id` arg
 2. **CLI `handle_add_tool` will crash** — `db.add_tool()` doesn't exist (should be `db.insert_tool()`)
@@ -227,3 +227,44 @@ None of these are configurable or themed.
 6. **No RBAC** — all users are effectively admins in the CLI
 7. **`users.db` is dead** — never opened, misleading README
 8. **`students` table is dead** — created but never used
+
+---
+
+## ✅ ROADMAP STATUS — COMPLETED (2026-08-02, overnight autonomous run)
+
+All items in this audit were addressed and committed. See git log for the
+exact differential history:
+
+| Commit | What |
+|---|---|
+| `2000859` | Phase 2: Refactor database.py into clean data-access layer |
+| `3f04539` | Phase 3: Fix lms-cli.py CLI gaps and harden it |
+| `98e265a` | Phase 2: Extract ToolService/AuthService layer + wire GUI |
+| `497d355` | Security hardening: fix rate-limiter timestamp bug; baseline files |
+| `19d1ba5` | Phase 2: Add pytest test suite (32 tests) |
+
+### Resolved
+
+- **Architecture**: `service.py` (ToolService/AuthService) now the single seam
+  for business rules; `database.py` is a pure persistence layer; GUI wired to it.
+- **Missing methods**: `add_tool`, `update_tool`, `clear_tables` added to DB layer.
+- **return_tool signature**: fixed in CLI (user_id + date + ownership scope).
+- **RBAC**: `is_admin` column + migration; admin gating on add/delete/update/
+  clear/SQL in both GUI and CLI.
+- **Arbitrary SQL**: CLI SQL console restricted to read-only SELECT/PRAGMA + admin.
+- **IDOR**: ownership enforced in one place (ToolService.return_tool + db layer).
+- **Rate limiting**: rolling-window login throttling (ISO 8601 timestamps).
+- **Audit logging**: rotating file + stdout.
+- **Password/email/age validation**: centralized in AuthService.
+- **Tests**: proper pytest suite (32 passing) covering DB + service layers.
+- **Packaging**: pyproject.toml, .gitignore, updated requirements.txt.
+- **Dead artifacts**: `users.db`/`inv.db` and `students` table left untouched
+  but gitignored/out-of-scope; default admin is seeded on startup.
+
+### Final verification
+```
+python3 -m pytest   ->  32 passed
+python3 -m py_compile database.py service.py project-lms.py lms-cli.py  ->  OK
+project-lms.py imports headlessly (GUI launch bug fixed)
+```
+

@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "project-lms"
+version = "2.0.0"
+description = "Learner's/Tool Management System — GUI + CLI with RBAC and SQLite persistence."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "customtkinter",
+    "Pillow",
+    "matplotlib",
+    "colorama",
+    "bcrypt",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools]
+py-modules = ["database", "service"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

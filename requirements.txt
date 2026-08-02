@@ -1,6 +1,9 @@
+# Runtime dependencies
 customtkinter
 Pillow
 matplotlib
 colorama
 bcrypt
 
+# Development / test dependencies
+pytest
