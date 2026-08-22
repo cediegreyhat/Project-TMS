@@ -1,144 +1,230 @@
-# **Learner's Management System**
+# **Project-LMS — Learner's Management System**
+
+A desktop tool-inventory system for schools and small workshops. Admins add and
+maintain tools; users borrow and return them. Two interfaces share a single
+business-logic and persistence layer: a **customtkinter GUI** (primary) and a
+**CLI** (for scripted/admin use).
+
+---
 
 ## **Table of Contents**
 - [Introduction](#introduction)
-- [Motivations](#motivations)
 - [Features](#features)
-- [Roadmap](#roadmap)
 - [Project Structure](#project-structure)
 - [Installation and Usage](#installation-and-usage)
+- [Architecture](#architecture)
+- [Testing](#testing)
+- [Security Notes](#security-notes)
 - [Technology Stack](#technology-stack)
-- [Future Enhancements](#future-enhancements)
 - [Contributors](#contributors)
 
 ---
 
 ## **Introduction**
-The **Tool Management System** is a full-stack project designed to streamline inventory management for tools. It supports functionalities like tool borrowing, returning, tracking, and maintaining tool conditions. This system ensures ease of use for both admins and users while providing reliable database storage with an intuitive interface.
 
----
+Project-LMS is a 2nd-year Computer Engineering final-assessment project that
+tracks physical tool inventory: who has what, when it was borrowed, and what
+condition it is in. The system supports two roles — **Admin** (full inventory
+control) and **Regular User** (view and borrow) — and persists everything to a
+local SQLite database.
 
-## **Motivations**
-This project was developed as part of a final assessment for a **Computer Engineering course** to apply knowledge of software engineering, databases, and user interface design. 
-
-The motivation stems from:
-1. The need for efficient tracking of tool inventory in educational and workplace settings.
-2. Addressing real-world challenges like misplaced tools, insufficient quantities, and manual record-keeping.
-3. Providing a professional and collaborative learning experience for team members with varying skill levels.
+The codebase is intentionally structured into three layers (database → service
+→ presentation) so business rules live in exactly one place and both the GUI
+and the CLI can be maintained independently.
 
 ---
 
 ## **Features**
-### Functional Requirements
-1. **User Roles**:
-   - **Admin**: Manage inventory (add, delete, update tools).
-   - **Regular Users**: View and borrow tools.
-2. **Tool Management**:
-   - Add, edit, delete, and search tools.
-   - Track tool quantities and conditions.
-3. **Transaction Management**:
-   - Borrow and return tools.
-   - Record transactions with timestamps.
-4. **Database**:
-   - SQLite-based database for persistent and offline storage.
-5. **GUI**:
-   - Future integration of a user-friendly interface for interaction.
 
-### Non-Functional Requirements
-1. **Local Execution**:
-   - Entirely offline functionality for secure and reliable operations.
-2. **Simplicity**:
-   - Clean design focusing on ease of use and functionality.
+### Functional
+- **Role-based access control** — admins manage inventory, regular users borrow/return.
+- **Tool CRUD** — add, update, delete, and search tools by name or category.
+- **Borrow / return** with quantity tracking, atomic ownership transitions, and a
+  full transaction log.
+- **Search + filter** — live keyword search plus category and status filters in
+  the GUI; numeric `SELECT`/`PRAGMA`/`EXPLAIN`/`WITH` console in the CLI.
+- **Statistics dashboard** — total / available / borrowed / categories counts,
+  per-refresh deltas, category donut chart.
+- **Password authentication** with bcrypt hashing and per-username rate limiting
+  (5 attempts per 10 minutes).
+- **Schema migrations** — versioned, idempotent, runs on every startup.
 
----
-
-## **Roadmap**
-### Week 1: Development Timeline
-| Day  | Task                          | Details                                                                 | Deliverables                     |
-|------|-------------------------------|-------------------------------------------------------------------------|----------------------------------|
-| 1 :heavy_check_mark:    | Project Setup                 | Define the database schema, initialize environment.                    | `inventory.db` with schema      |
-| 2 :heavy_check_mark:    | Backend Development           | Implement CRUD operations for tool management.                         | Functional backend               |
-| 3 :heavy_check_mark:    | Basic Interface               | Create GUI layout and implement basic forms (e.g., add tool).          | GUI for tool addition            |
-| 4 :heavy_check_mark:    | Borrow/Return Features        | Add borrow/return logic and integrate into the database.               | Borrow/return functionality      |
-| 5 :heavy_check_mark:    | Search and Reporting          | Search tools, generate basic reports (e.g., overdue tools).            | Search and reporting features    |
-| 6 :heavy_check_mark:    | Testing and Debugging         | Comprehensive testing, bug fixes, and sample data validation.          | Stable system                    |
-| 7 :heavy_check_mark:    | Documentation and Final Touches | Prepare user manual, project report, and final presentation.           | Complete project documentation   |
+### Non-Functional
+- **Offline-first** — no network dependencies; SQLite file at `db/inventory.db`.
+- **Audit log** — all writes stream to stdout *and* `logs/app.log` (1 MB × 3 rotation).
 
 ---
 
 ## **Project Structure**
+
 ```plaintext
-/main
-  ├── lms=cli.py          # CLI
-  ├── database.py      # Database interactions and CRUD operations
-  ├── project-lms.py           # Main App GUI
-/db
-  └── inventory.db     # SQLite database file
-  └── users.db         # Account Database
-   
-
-/assets                # Miscellaneous
-
-/docs
-  ├── User_Manual & Project_Report.pdf  # User manual documentation & Project report
+Project-LMS/
+├── project-lms.py        # Main GUI entry point (LoginApp + ToolManagementApp)
+├── lms-cli.py            # CLI entry point (banner + menu)
+├── database.py           # DatabaseManager — persistence seam, schema, migrations
+├── service.py            # ToolService + AuthService — business rules, validation, RBAC
+├── gui/
+│   ├── __init__.py
+│   ├── theme.py          # Color palette constants (single source of truth)
+│   └── dialogs.py        # BorrowDialog, ReturnDialog, AddToolDialog, DeleteToolDialog,
+│                         # AdvancedToolTip (shared `_BaseDialog` base)
+├── tests/
+│   ├── conftest.py       # Fixtures: db, auth, tools, admin_user, regular_user
+│   ├── test_database.py  # DB-layer tests (auth, CRUD, borrow/return, rate limiting)
+│   └── test_service.py   # Service-layer tests (RBAC, validation, ownership)
+├── db/
+│   └── inventory.db      # SQLite (auto-created on first run)
+├── assets/               # Optional background images + avatar
+└── logs/                 # Rotating app.log (auto-created)
 ```
+
+---
 
 ## **Installation and Usage**
-Prerequisites
 
-    Python 3.x installed on your system.
-    SQLite pre-installed (comes with Python).
+### Prerequisites
+- **Python 3.10+** (uses `match`/`case` patterns in spirit; tested on 3.13)
+- **SQLite ≥ 3.25** (the borrow-history query uses `ROW_NUMBER() OVER`)
+- Linux, macOS, or Windows
 
-Setup Instructions
-
-   Clone this repository:
-```
-git clone [https://github.com/cediegreyhat/Project-LMS/.git](https://github.com/cediegreyhat/Project-LMS)
+### Setup
+```bash
+git clone https://github.com/cediegreyhat/Project-LMS.git
 cd Project-LMS
-```
-Install required Python libraries:
-```
+
+# PEP 668 friendly — use a venv:
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-Run the project:
+### Running
 
-    python3 project-lms.py
+**GUI (recommended):**
+```bash
+python project-lms.py
+```
+On first launch the app seeds a default admin account (`admin` / `admin123`).
+**Change this password immediately** — see [Security Notes](#security-notes).
+
+**CLI:**
+```bash
+python lms-cli.py
+```
+The CLI menu mirrors the GUI operations and adds an admin-only read-only SQL
+console.
+
+---
+
+## **Architecture**
+
+Project-LMS follows a strict three-layer split:
+
+```
+┌────────────────────────────────────────────────────────────┐
+│  Presentation  (project-lms.py, lms-cli.py)                │
+│  ─ GUI shell + dashboard, dialogs, sidebar, footer         │
+│  ─ CLI banner, menu, table printer                         │
+└──────────────────────┬─────────────────────────────────────┘
+                       │  ToolService / AuthService (service.py)
+                       │  ─ Validation, RBAC, ownership checks
+                       │  ─ Translates DB errors → ServiceError
+                       ▼
+┌────────────────────────────────────────────────────────────┐
+│  Persistence  (database.py / DatabaseManager)              │
+│  ─ SQL (parameterised everywhere), schema, migrations      │
+│  ─ Atomic borrow/return with BEGIN IMMEDIATE + RETURNING   │
+│  ─ Rate-limited auth, bcrypt, audit log                    │
+└────────────────────────────────────────────────────────────┘
+```
+
+**Why three layers?** GUI and CLI both delegate business rules to the service
+layer. A change to "what counts as available" is a one-file edit, not a
+two-interface search-and-replace.
+
+### Key contracts
+
+| Layer | Entry point | Returns |
+|---|---|---|
+| Service | `ToolService.borrow_tool(tool_id, user_id)` | `True` or raises `ServiceError` |
+| Service | `ToolService.add_tool(name, cat, cond, qty, loc, actor)` | `True` or raises `ServiceError` |
+| DB | `DatabaseManager.borrow_tool(...)` | `True` / `False` (never raises `ServiceError`) |
+| GUI dialogs | `BorrowDialog(parent, tools, user_id, on_success)` | side effect + `on_success()` callback |
+
+---
+
+## **Testing**
+
+```bash
+python -m pytest tests/ -q
+```
+
+Currently **32 tests pass**, covering:
+
+- **Database layer** — auth round-trip, duplicate-user rejection, partial
+  updates, deletion with cascading transactions, pagination, case-insensitive
+  search, login rate limiting, ownership-checked borrow/return.
+- **Service layer** — RBAC matrix (admin vs non-admin × add/update/delete/clear),
+  input validation (condition enum, quantity sign, duplicate name, bad email,
+  bad age), borrow-then-twice, return-others-tool.
+
+The GUI is intentionally not under automated test in this assessment — it
+requires an X server and a running tk event loop. The service and DB layers
+cover the behavior the GUI delegates to.
+
+---
+
+## **Security Notes**
+
+- **Default admin credentials are seeded on first run** (`admin` /
+  `admin123`) if no admin exists in the database. **Change this password in
+  production**; the seed is a convenience for classroom demos, not a security
+  feature. The CLI prints no warning — operators should know to delete the
+  default account after first login.
+- **Passwords** are stored as bcrypt hashes (`bcrypt.gensalt()`, default cost).
+  Plaintext never touches disk.
+- **Login rate limiting** — 5 failed attempts per username in a rolling
+  10-minute window. Even correct credentials are rejected while the window is
+  active. Successful login drains the attempt log for that user.
+- **SQL injection** — all queries are parameterised; the only f-string-built
+  fragment is the column-name list in `update_tool`, and the column names come
+  from a hard-coded `allowed` set in the DB layer (defense-in-depth on top of
+  service-layer RBAC).
+- **CLI SQL console** is admin-only and read-only — `SELECT`, `PRAGMA`,
+  `EXPLAIN`, `WITH` only; destructive keywords (`INSERT`, `UPDATE`, `DELETE`,
+  `DROP`, `ALTER`, `CREATE`, `REPLACE`, `TRUNCATE`, `ATTACH`, `DETACH`,
+  `VACUUM`, `PRAGMA writable*`, `REINDEX`, `SAVEPOINT`, `RELEASE`,
+  `ROLLBACK`, `COMMIT`, `BEGIN`, `END`, `GRANT`, `REVOKE`) are blocked by
+  regex even inside subqueries.
+- **RBAC** is enforced at both the service layer (where business rules live)
+  *and* the DB layer (`clear_tables` re-checks `is_admin`), so a caller that
+  bypasses the service still hits the gate.
+
+---
 
 ## **Technology Stack**
 
-    Backend: Python (SQLite for database management)
-    Database: SQLite (file-based)
-    Future Plans for Frontend: Tkinter or PyQt for GUI
+- **Language:** Python 3.10+
+- **GUI:** `customtkinter`, `tkinter.ttk` (Treeview), `PIL` (background images, avatar)
+- **Charts:** `matplotlib` (Figure + FigureCanvasTkAgg, donut chart of category counts)
+- **Database:** SQLite (WAL mode, `sqlite3.Row` factory)
+- **Auth:** `bcrypt` for password hashing
+- **Tests:** `pytest`
+- **CLI styling:** `colorama`
 
-## **Future Enhancements**
-
-    QR/Barcode Integration:
-        Use QR codes for easy tool tracking and transactions.
-    Analytics and Reporting:
-        Visualize tool usage statistics with charts.
-    Multi-User Authentication:
-        Add login/logout functionality for admins and users.
-    Enhanced GUI:
-        Create a visually appealing interface with Tkinter or PyQT
+---
 
 ## **Contributors**
-Team Members:
 
-    Lhord Cedrick T. Delos Santos (Team Leader): Full-Stacked Development, Database Integration
-    Luis Fernandez: Basic GUI Development
-    Warren Dollendo: Basic GUI Development
-    Dan Angelo Domagsang: Basic GUI Development
-    Charles Benedict Rafols: Database Development/Debug
-    Charles Allen Lacsa: Documentation
-    Brix Baldiray: Documentation
-    Dylan Guliquey: Testing and Debug
-    Joe Ckelvin Barboza: Documentation
-    Van Hallen Hayag: Documentation
+- **Lhord Cedrick T. Delos Santos** (Team Leader): full-stack development, database integration, code review, GUI refactor
+- **Luis Fernandez**: basic GUI development
+- **Warren Dollendo**: basic GUI development
+- **Dan Angelo Domagsang**: basic GUI development
+- **Charles Benedict Rafols**: database development / debugging
+- **Charles Allen Lacsa**: documentation
+- **Brix Baldiray**: documentation
+- **Dylan Guliquey**: testing and debugging
+- **Joe Ckelvin Barboza**: documentation
+- **Van Hallen Hayag**: documentation
 
-
-Feel free to contribute or raise issues in the repository! 🚀
-
-
-
-
+Feel free to contribute or raise issues in the repository. 🚀
