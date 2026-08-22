@@ -13,18 +13,17 @@ from tkinter import StringVar, messagebox
 
 import customtkinter as ctk
 
+from gui.theme import (
+    COLOR_ACCENT,
+    COLOR_ACCENT_HOVER,
+    COLOR_BG_DARK,
+    COLOR_CARD,
+    COLOR_CARD_BORDER,
+    COLOR_DANGER,
+    COLOR_TEXT_MUTED,
+    COLOR_TEXT_PRIMARY,
+)
 from service import ServiceError
-
-
-# Theme palette constants. Kept in sync with project-lms.py.
-COLOR_BG_DARK = "#12161f"
-COLOR_CARD = "#1c212d"
-COLOR_CARD_BORDER = "#2e3545"
-COLOR_ACCENT = "#4f8cff"
-COLOR_ACCENT_HOVER = "#3b73e0"
-COLOR_TEXT_PRIMARY = "#f5f6fa"
-COLOR_TEXT_MUTED = "#a0a5b5"
-COLOR_DANGER = "#e05655"
 
 
 class AdvancedToolTip:

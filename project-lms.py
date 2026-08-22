@@ -38,23 +38,22 @@ from gui.dialogs import (
     DeleteToolDialog,
     ReturnDialog,
 )
+from gui.theme import (
+    COLOR_ACCENT,
+    COLOR_ACCENT_HOVER,
+    COLOR_BG_DARK,
+    COLOR_CARD,
+    COLOR_CARD_BORDER,
+    COLOR_DANGER,
+    COLOR_DANGER_HOVER,
+    COLOR_SUCCESS,
+    COLOR_TEXT_MUTED,
+    COLOR_TEXT_PRIMARY,
+)
 from service import AuthService, ServiceError, ToolService
 
 RETURN_EVENT = "<Return>"
 ctk.set_appearance_mode("dark")
-ctk.set_default_color_theme("dark-blue")
-
-# Theme Palette (Deep Navy / Glassmorphic)
-COLOR_BG_DARK = "#12161f"
-COLOR_CARD = "#1c212d"
-COLOR_CARD_BORDER = "#2e3545"
-COLOR_ACCENT = "#4f8cff"
-COLOR_ACCENT_HOVER = "#3b73e0"
-COLOR_TEXT_PRIMARY = "#f5f6fa"
-COLOR_TEXT_MUTED = "#a0a5b5"
-COLOR_DANGER = "#e05655"
-COLOR_DANGER_HOVER = "#c0392b"
-COLOR_SUCCESS = "#2ecc71"
 
 
 class LoginApp:
