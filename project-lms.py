@@ -17,15 +17,18 @@ Features:
 """
 
 import datetime
+import logging
 import os
 import tkinter as tk
-from tkinter import StringVar, messagebox, simpledialog, ttk
+from tkinter import StringVar, messagebox, ttk
 
 import customtkinter as ctk
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 from PIL import Image, ImageDraw, ImageTk
+
+logger = logging.getLogger("project_lms.gui")
 
 from database import DatabaseManager
 from gui.dialogs import (
@@ -91,7 +94,9 @@ class LoginApp:
                 bg_label = tk.Label(self.login_window, image=self.bg_photo, borderwidth=0)
                 bg_label.place(x=0, y=0, relwidth=1, relheight=1)
             except Exception:
-                pass
+                logger.warning("Failed to load login background image: %s", bg_path, exc_info=True)
+        else:
+            logger.info("Login background image not found at %s (continuing without it).", bg_path)
 
         # Glassy Login Frame
         login_frame = ctk.CTkFrame(
@@ -213,7 +218,9 @@ class LoginApp:
                 bg_label = tk.Label(self.signup_window, image=self.signup_bg_photo, borderwidth=0)
                 bg_label.place(x=0, y=0, relwidth=1, relheight=1)
             except Exception:
-                pass
+                logger.warning("Failed to load signup background image: %s", bg_path, exc_info=True)
+        else:
+            logger.info("Signup background image not found at %s (continuing without it).", bg_path)
 
         signup_frame = ctk.CTkFrame(
             self.signup_window,
@@ -374,7 +381,9 @@ class ToolManagementApp:
                 avatar_lbl = ctk.CTkLabel(self.sidebar, image=self.avatar_img, text="")
                 avatar_lbl.pack(pady=(28, 10))
             except Exception:
-                pass
+                logger.warning("Failed to load avatar image: %s", profile_img_path, exc_info=True)
+        else:
+            logger.info("Avatar image not found at %s (continuing without it).", profile_img_path)
 
         ctk.CTkLabel(
             self.sidebar, text=name, font=("Roboto", 18, "bold"), text_color=COLOR_TEXT_PRIMARY
