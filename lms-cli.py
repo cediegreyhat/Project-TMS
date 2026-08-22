@@ -224,16 +224,18 @@ def handle_return_tool(db, session):
         print(Fore.RED + f"Error returning tool: {e}" + Style.RESET_ALL)
 
 
-def handle_search_tools(db):
+def handle_search_tools(svc):
     try:
         keyword = get_valid_str("Enter search keyword (tool name or category): ")
-        results = db.search_tool(keyword)
+        results = svc.search_tools(keyword)
         if not results:
             print(Fore.YELLOW + "No tools found matching the search criteria.")
         else:
             headers = list(results[0].keys()) if isinstance(results[0], dict) else None
             print(Fore.CYAN + "\nSearch Results:")
             print_table(results, headers)
+    except ServiceError as e:
+        print(Fore.RED + str(e) + Style.RESET_ALL)
     except Exception as e:
         print(Fore.RED + f"Error searching for tools: {e}" + Style.RESET_ALL)
 
@@ -351,7 +353,7 @@ if __name__ == "__main__":
             elif choice == "6":
                 handle_return_tool(db, session)
             elif choice == "7":
-                handle_search_tools(db)
+                handle_search_tools(svc)
             elif choice == "8":
                 handle_clear_data(svc, session)
             elif choice == "9":

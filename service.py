@@ -103,7 +103,13 @@ class ToolService:
         if tool_id in held:
             raise ServiceError("You already hold this tool.")
         date = borrow_date or datetime.date.today().isoformat()
-        if not self.db.borrow_tool(tool_id, user_id, "", date):
+        try:
+            ok = self.db.borrow_tool(tool_id, user_id, "", date)
+        except Exception as e:
+            # Never let a raw sqlite3 / DB-layer message reach the GUI; the
+            # user-facing wording lives here.
+            raise ServiceError(f"Database error while borrowing: {e}")
+        if not ok:
             raise ServiceError("Failed to borrow tool. It may have just become unavailable.")
         return True
 
@@ -113,7 +119,11 @@ class ToolService:
         if tool_id not in held:
             raise ServiceError("You can only return a tool you currently hold.")
         date = return_date or datetime.date.today().isoformat()
-        if not self.db.return_tool(tool_id, user_id, date):
+        try:
+            ok = self.db.return_tool(tool_id, user_id, date)
+        except Exception as e:
+            raise ServiceError(f"Database error while returning: {e}")
+        if not ok:
             raise ServiceError("Failed to return tool (already returned or not owned).")
         return True
 
