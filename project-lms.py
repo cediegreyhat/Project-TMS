@@ -348,6 +348,7 @@ class ToolManagementApp:
         self._build_controls_section()
         self._build_table_section()
         self._build_chart_section()
+        self._build_footer()
 
         self.refresh_dashboard()
         self.window.mainloop()
@@ -534,6 +535,7 @@ class ToolManagementApp:
 
         self.tree.tag_configure("evenrow", background=COLOR_CARD)
         self.tree.tag_configure("oddrow", background="#222836")
+        self.tree.tag_configure("empty", background=COLOR_CARD, foreground=COLOR_TEXT_MUTED)
 
         self.tooltip = AdvancedToolTip(self.tree)
         self.tree.bind("<Motion>", self._on_tree_motion)
@@ -551,7 +553,40 @@ class ToolManagementApp:
         self.chart_card.pack(fill="x")
         self.chart_card.pack_propagate(False)
 
+    def _build_footer(self):
+        """Bottom status bar: tool count summary + loading indicator + last-refreshed stamp."""
+        self.footer = ctk.CTkFrame(
+            self.workspace,
+            fg_color=COLOR_CARD,
+            corner_radius=10,
+            border_width=1,
+            border_color=COLOR_CARD_BORDER,
+            height=32,
+        )
+        self.footer.pack(fill="x", pady=(12, 0))
+        self.footer.pack_propagate(False)
+
+        self._footer_status = ctk.CTkLabel(
+            self.footer,
+            text="",
+            font=("Roboto", 11),
+            text_color=COLOR_TEXT_MUTED,
+            anchor="w",
+        )
+        self._footer_status.pack(side="left", padx=14)
+
+        self._footer_loading = ctk.CTkLabel(
+            self.footer,
+            text="",
+            font=("Roboto", 11),
+            text_color=COLOR_ACCENT,
+            anchor="e",
+        )
+        self._footer_loading.pack(side="right", padx=14)
+
     def refresh_dashboard(self):
+        self._footer_loading.configure(text="● Refreshing…")
+        self.window.update_idletasks()
         all_tools = self.db.fetch_all_tools()
 
         # Update Stat Cards
@@ -565,6 +600,26 @@ class ToolManagementApp:
         self.stat_cards["borrowed"].configure(text=str(borrowed_count))
         self.stat_cards["categories"].configure(text=str(len(categories)))
 
+        # Stat deltas (vs previous refresh)
+        for key, val in (
+            ("total", total_count),
+            ("available", available_count),
+            ("borrowed", borrowed_count),
+            ("categories", len(categories)),
+        ):
+            prev = self._prev_stats[key]
+            if val > prev:
+                self.stat_deltas[key].configure(
+                    text=f"▲ +{val - prev}", text_color=COLOR_SUCCESS
+                )
+            elif val < prev:
+                self.stat_deltas[key].configure(
+                    text=f"▼ {val - prev}", text_color=COLOR_DANGER
+                )
+            else:
+                self.stat_deltas[key].configure(text="— steady", text_color=COLOR_TEXT_MUTED)
+            self._prev_stats[key] = val
+
         # Update Category Filter Menu
         curr_cat = self.category_var.get()
         new_cats = ["All Categories"] + categories
@@ -574,6 +629,16 @@ class ToolManagementApp:
 
         self.apply_filters()
         self._update_donut_chart(all_tools)
+
+        # Footer status + close loading indicator
+        stamp = datetime.datetime.now().strftime("%H:%M:%S")
+        self._footer_status.configure(
+            text=(
+                f"📊 {total_count} total · ✅ {available_count} available · "
+                f"🔄 {borrowed_count} borrowed · 🏷️ {len(categories)} categories"
+            )
+        )
+        self._footer_loading.configure(text=f"✓ Last refresh {stamp}")
 
     def apply_filters(self):
         tools = self.db.fetch_all_tools()
@@ -603,6 +668,14 @@ class ToolManagementApp:
             self.tree.delete(row)
 
         self._row_tooltips = {}
+        if not tools:
+            self.tree.insert(
+                "",
+                "end",
+                values=("", "📭  No tools match the current filters.", "", "", "", "", ""),
+                tags=("empty",),
+            )
+            return
         for idx, t in enumerate(tools):
             status_text = "Borrowed" if (t["status"] == "borrowed" or t.get("borrower")) else "Available"
             tag = "evenrow" if idx % 2 == 0 else "oddrow"
