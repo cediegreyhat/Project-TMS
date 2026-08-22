@@ -716,6 +716,12 @@ class ToolManagementApp:
 
     def _on_tree_motion(self, event):
         item = self.tree.identify_row(event.y)
+        # Only re-show the tooltip when the row under the cursor actually
+        # changes; rebuilding on every motion event would destroy/recreate
+        # the Toplevel dozens of times per second during a hover.
+        if item == getattr(self, "_last_tooltip_row", None):
+            return
+        self._last_tooltip_row = item
         if item and hasattr(self, "_row_tooltips") and item in self._row_tooltips:
             x = self.tree.winfo_rootx() + event.x + 15
             y = self.tree.winfo_rooty() + event.y + 10
@@ -724,6 +730,18 @@ class ToolManagementApp:
             self.tooltip.hide()
 
     def _update_donut_chart(self, tools):
+        # Close any prior figure to release its memory; otherwise repeated
+        # refreshes (after every borrow/return/add/delete) leak matplotlib
+        # resources and the chart card flickers on slow VMs.
+        old_canvas = getattr(self, "_chart_canvas", None)
+        if old_canvas is not None:
+            old_canvas.get_tk_widget().destroy()
+            self._chart_canvas = None
+        old_fig = getattr(self, "_chart_fig", None)
+        if old_fig is not None:
+            plt.close(old_fig)
+            self._chart_fig = None
+
         for w in self.chart_card.winfo_children():
             w.destroy()
 
@@ -769,6 +787,8 @@ class ToolManagementApp:
         canvas = FigureCanvasTkAgg(fig, self.chart_card)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
+        self._chart_fig = fig
+        self._chart_canvas = canvas
 
     # -- Action Dialogs --------------------------------------------------------
     def action_borrow(self):
