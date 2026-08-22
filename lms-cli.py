@@ -2,6 +2,7 @@
 
 import datetime
 import getpass
+import re
 import traceback
 
 from colorama import Fore, Style, init
@@ -10,6 +11,17 @@ from database import DatabaseManager
 from service import ServiceError, ToolService
 
 init(autoreset=True)
+
+# SQL keywords that are NOT allowed in the CLI read-only console.
+# Any statement that *starts with* one of these prefixes is rejected before
+# it ever reaches sqlite3, eliminating the trivially-bypassed prefix-only
+# check that a previous version relied on.
+_BLOCKED_SQL_KEYWORDS = (
+    "insert", "update", "delete", "drop", "alter", "create", "replace",
+    "truncate", "attach", "detach", "vacuum", "pragma writable",
+    "pragma writable_schema", "reindex", "savepoint", "release",
+    "rollback", "commit", "begin", "end", "grant", "revoke",
+)
 
 
 def print_banner():
@@ -173,8 +185,11 @@ def handle_borrow_tool(db, session):
         print(Fore.CYAN + "\nAvailable Tools for Borrowing:")
         print_table(available_tools, ["tool_id", "name", "status", "quantity"])
         tool_id = get_valid_int("Enter the Tool ID to borrow: ")
+        # Quantity + ownership semantics: a tool is fully free iff stock > 0
+        # AND no one currently holds a unit. This is the right "available"
+        # signal for both single-unit and multi-quantity tools.
         selected = db.fetch_tool_by_id(tool_id)
-        if not selected or selected["quantity"] <= 0 or selected["status"] != "available":
+        if not selected or selected["quantity"] <= 0 or selected.get("user_id") is not None:
             print(Fore.RED + "Invalid selection. The tool is either unavailable or does not exist." + Style.RESET_ALL)
             return
         borrower_name = session.username
@@ -239,12 +254,23 @@ def handle_execute_sql(db, session):
     """Admin-only read-only SQL console. Destructive statements are blocked."""
     if not require_admin(session):
         return
-    sql_command = input(Fore.YELLOW + "Enter SQL command to execute (read-only): " + Style.RESET_ALL).strip()
-    stripped = sql_command.lstrip().lower()
-    allowed_prefixes = ("select", "pragma table_info", "pragma index_list")
-    if not any(stripped.startswith(p) for p in allowed_prefixes):
-        print(Fore.RED + "Blocked: only read-only (SELECT/PRAGMA) statements are permitted.")
+    sql_command = input(Fore.YELLOW + "Enter SQL command (SELECT/PRAGMA/EXPLAIN): " + Style.RESET_ALL).strip()
+    if not sql_command:
         return
+    
+    # Normalize and validate prefix
+    stripped = sql_command.lstrip().lower()
+    allowed_prefixes = ("select", "pragma", "explain", "with")
+    if not any(stripped.startswith(p) for p in allowed_prefixes):
+        print(Fore.RED + "Blocked: statement must start with SELECT, PRAGMA, EXPLAIN, or WITH.")
+        return
+    
+    # Keyword-based safeguard: block destructive operations even in subqueries or multi-statements.
+    for word in _BLOCKED_SQL_KEYWORDS:
+        if re.search(rf"\b{re.escape(word)}\b", stripped):
+            print(Fore.RED + f"Blocked: forbidden keyword '{word}' detected.")
+            return
+    
     try:
         results = db._execute_query(sql_command, fetch=True)
         if not results:

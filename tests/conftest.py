@@ -3,6 +3,7 @@
 import os
 import sys
 import tempfile
+import time
 
 import pytest
 
@@ -12,6 +13,23 @@ from database import DatabaseManager  # noqa: E402
 from service import AuthService, ToolService  # noqa: E402
 
 
+def _cleanup_db(path):
+    """Remove a temp SQLite database, handling WAL checkpoint delays.
+
+    SQLite WAL mode can delay file handle release on some filesystems even
+    after close().  We retry the remove up to 3 times with a brief sleep.
+    """
+    if not os.path.exists(path):
+        return
+    for attempt in range(3):
+        try:
+            os.remove(path)
+            return
+        except OSError:
+            if attempt < 2:
+                time.sleep(0.05)
+
+
 @pytest.fixture
 def db():
     """A fresh, isolated DatabaseManager on a throwaway file."""
@@ -19,10 +37,10 @@ def db():
     mgr = DatabaseManager(tmp)
     yield mgr
     mgr.close()
-    try:
-        os.remove(tmp)
-    except OSError:
-        pass
+    _cleanup_db(tmp)
+    # Also clean up WAL/Journal sidecars.
+    for sidecar in f"{tmp}-wal", f"{tmp}-shm", f"{tmp}-journal":
+        _cleanup_db(sidecar)
 
 
 @pytest.fixture

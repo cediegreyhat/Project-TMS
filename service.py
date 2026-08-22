@@ -94,7 +94,9 @@ class ToolService:
         tool = self.db.fetch_tool_by_id(tool_id)
         if not tool:
             raise ServiceError("Tool not found.")
-        if tool["quantity"] <= 0 or tool["status"] != "available":
+        # Quantity + ownership semantics: tool is borrowable iff stock > 0
+        # AND no one currently holds a unit of it.
+        if tool["quantity"] <= 0 or tool.get("user_id") is not None:
             raise ServiceError("Tool is unavailable or quantity is insufficient.")
         # A user cannot borrow the same tool they currently hold.
         held = [t["tool_id"] for t in self.db.fetch_borrowed_by_user(user_id)]
@@ -119,7 +121,8 @@ class ToolService:
         return self.db.fetch_borrowed_by_user(user_id)
 
     def available_tools(self):
-        return self.db.fetch_tools_by_status("available")
+        """Tools with at least one unit free to borrow (quantity > 0, no owner)."""
+        return self.db.fetch_borrowable_tools()
 
     # -- Admin --------------------------------------------------------------------
     def clear_inventory(self, actor):

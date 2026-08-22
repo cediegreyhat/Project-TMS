@@ -146,20 +146,52 @@ class DatabaseManager:
             logger.error("Failed to create tables or indexes: %s", e)
             raise
 
+    SCHEMA_VERSION = 2
+
     def _migrate(self):
-        """Add any missing columns to an existing database schema."""
+        """Apply versioned, idempotent schema migrations.
+
+        A `schema_version` row tracks the highest applied migration. We only
+        run a migration if its version is greater than what's recorded, which
+        avoids re-running ALTER TABLE statements that would otherwise error
+        or duplicate columns on every startup.
+        """
         try:
-            cols = [
-                c[1] for c in self.conn.execute("PRAGMA table_info(users)").fetchall()
-            ]
-            if "is_admin" not in cols:
-                self.conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0")
+            self.conn.execute(
+                "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY)"
+            )
+            row = self.conn.execute(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_version"
+            ).fetchone()
+            current = row[0] if row else 0
+
+            # v1 → v2: ensure users.is_admin / users.created_at exist for older DBs.
+            if current < 1:
+                cols = [
+                    c[1] for c in self.conn.execute("PRAGMA table_info(users)").fetchall()
+                ]
+                if "is_admin" not in cols:
+                    self.conn.execute(
+                        "ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0"
+                    )
+                if "created_at" not in cols:
+                    self.conn.execute(
+                        "ALTER TABLE users ADD COLUMN created_at TEXT DEFAULT CURRENT_TIMESTAMP"
+                    )
+                self.conn.execute(
+                    "INSERT INTO schema_version (version) VALUES (?)", (1,)
+                )
                 self.conn.commit()
-                logger.info("Migrated users table: added is_admin column.")
-            if "created_at" not in cols:
-                self.conn.execute("ALTER TABLE users ADD COLUMN created_at TEXT DEFAULT CURRENT_TIMESTAMP")
+                logger.info("Migrated users table to v1 (added is_admin, created_at).")
+
+            # Mark current schema version.
+            if current < self.SCHEMA_VERSION:
+                self.conn.execute(
+                    "INSERT INTO schema_version (version) VALUES (?)",
+                    (self.SCHEMA_VERSION,),
+                )
                 self.conn.commit()
-                logger.info("Migrated users table: added created_at column.")
+                logger.info("Schema version set to %s.", self.SCHEMA_VERSION)
         except sqlite3.Error as e:
             logger.error("Migration failed: %s", e)
 
@@ -233,6 +265,24 @@ class DatabaseManager:
             (username, datetime.datetime.now().isoformat()),
         )
 
+    def _cleanup_login_attempts(self):
+        """Purge login_attempts rows older than the rate-limit window.
+
+        Keeps the table bounded; called on every successful login so old
+        attempts never accumulate.
+        """
+        cutoff = (
+            datetime.datetime.now()
+            - datetime.timedelta(minutes=self.LOGIN_ATTEMPT_WINDOW_MINUTES)
+        ).isoformat()
+        try:
+            self._execute_query(
+                "DELETE FROM login_attempts WHERE attempted_at < ?",
+                (cutoff,),
+            )
+        except sqlite3.Error as e:
+            logger.warning("Failed to purge old login_attempts: %s", e)
+
     def insert_user(self, username, password, name, age, email, is_admin=0):
         """Register a new user with a bcrypt-hashed password."""
         try:
@@ -271,6 +321,13 @@ class DatabaseManager:
             stored_hash = stored_hash.encode("utf-8")
         try:
             if bcrypt.checkpw(password.encode("utf-8"), stored_hash):
+                # Successful login: drain stale attempts for this user so the
+                # table stays bounded and the window resets cleanly.
+                self._execute_query(
+                    "DELETE FROM login_attempts WHERE username = ?",
+                    (username,),
+                )
+                self._cleanup_login_attempts()
                 return user
         except ValueError as e:
             logger.error("Invalid hash format for user %s: %s", username, e)
@@ -344,8 +401,16 @@ class DatabaseManager:
             self.conn.rollback()
             return False
 
-    def clear_tables(self):
-        """Clear tools and transactions tables (admin-only operation enforced upstream)."""
+    def clear_tables(self, actor_id=None):
+        """Clear tools and transactions tables (admin-only operation).
+
+        Defense-in-depth: the service layer already gates this, but the DB
+        layer enforces admin here too so any caller bypassing the service
+        still hits the check.
+        """
+        if actor_id is not None and not self.is_admin(actor_id):
+            logger.warning("clear_tables DENIED for user %s (not admin).", actor_id)
+            return False
         self.ensure_connection_open()
         try:
             with closing(self.conn.cursor()) as cursor:
@@ -373,12 +438,30 @@ class DatabaseManager:
         return rows[0] if rows else None
 
     def fetch_tools_by_status(self, status, user_id=None):
+        """Return tools whose `status` column matches the requested value.
+
+        Note: status is a coarse indicator ('available' / 'borrowed' /
+        'unavailable'). For multi-quantity tools, status becomes 'borrowed'
+        as soon as ANY unit is borrowed even when units remain, so callers
+        that need "any unit free" should use the quantity column directly.
+        """
         query = "SELECT tool_id, name, status, quantity FROM tools WHERE status = ?"
         params = [status]
         if user_id:
             query += " AND user_id = ?"
             params.append(user_id)
         return self._execute_query(query, tuple(params), fetch=True)
+
+    def fetch_borrowable_tools(self):
+        """Tools that have at least one unit free to be borrowed now.
+
+        'Available' with quantity semantics — includes multi-quantity tools
+        whose status reads 'borrowed' but still have stock remaining.
+        """
+        return self._execute_query(
+            "SELECT tool_id, name, status, quantity FROM tools WHERE quantity > 0 AND user_id IS NULL",
+            fetch=True,
+        )
 
     def search_tool(self, keyword):
         """Case-insensitive partial search on name or category."""
@@ -402,20 +485,32 @@ class DatabaseManager:
 
     # -- Borrow / return -----------------------------------------------------------
     def borrow_tool(self, tool_id, user_id, borrower_name, borrow_date):
-        """Atomically decrement quantity, mark the borrower, and log a transaction."""
+        """Atomically decrement quantity, mark the borrower, and log a transaction.
+
+        Atomicity guarantees:
+- Only succeeds when the tool is currently unowned (user_id IS NULL) AND has stock.
+- Uses RETURNING (SQLite ≥3.35) so we verify the write actually committed and
+  can distinguish "no stock" from "already borrowed by someone else".
+- The whole borrow + transaction insert runs inside a single explicit transaction.
+        """
         self.ensure_connection_open()
         try:
             with closing(self.conn.cursor()) as cursor:
+                cursor.execute("BEGIN IMMEDIATE")
                 tool_update = """
                     UPDATE tools SET
                         quantity = quantity - 1,
-                        status = CASE WHEN quantity - 1 <= 0 THEN 'unavailable' ELSE 'available' END,
+                        status = CASE WHEN quantity - 1 <= 0 THEN 'unavailable' ELSE 'borrowed' END,
                         user_id = ?, borrower = ?, borrow_date = ?
-                    WHERE tool_id = ? AND quantity > 0
+                    WHERE tool_id = ? AND quantity > 0 AND user_id IS NULL
+                    RETURNING tool_id
                 """
                 cursor.execute(tool_update, (user_id, borrower_name, borrow_date, tool_id))
-                if cursor.rowcount == 0:
-                    raise ValueError("Tool is unavailable or quantity is insufficient.")
+                if cursor.fetchone() is None:
+                    self.conn.rollback()
+                    raise ValueError(
+                        "Tool is unavailable, already borrowed, or quantity is insufficient."
+                    )
                 cursor.execute(
                     "INSERT INTO transactions (tool_id, user_id, transaction_type, transaction_date) "
                     "VALUES (?, ?, 'borrow', ?)",
@@ -426,30 +521,43 @@ class DatabaseManager:
                 return True
         except Exception as e:
             logger.error("Error in borrow_tool: %s", e)
-            self.conn.rollback()
+            try:
+                self.conn.rollback()
+            except sqlite3.Error:
+                pass
             return False
 
     def return_tool(self, tool_id, user_id, return_date):
-        """Return a tool, only if the given user currently owns it (ownership check).
+        """Return a tool: restore one quantity unit and log the transaction.
 
-        Returns True on success, False if not the owner / already returned.
+        Requires that the tool is currently borrowed by the calling user.
+        Uses BEGIN IMMEDIATE so the ownership SELECT and the UPDATE run as a
+        single atomic writer transaction, eliminating the race where two
+        concurrent returns both pass the ownership check.
+        Restores quantity so the tool is immediately available for others.
         """
         self.ensure_connection_open()
         try:
             with closing(self.conn.cursor()) as cursor:
-                # Ownership check: the tool must be currently borrowed by this user.
+                cursor.execute("BEGIN IMMEDIATE")
                 owned_rows = cursor.execute(
                     "SELECT 1 FROM tools WHERE tool_id = ? AND user_id = ? "
                     "AND borrower IS NOT NULL",
                     (tool_id, user_id),
                 ).fetchone()
                 if not owned_rows:
+                    self.conn.rollback()
                     logger.warning(
                         "Return DENIED: user %s does not own tool %s", user_id, tool_id
                     )
                     return False
                 cursor.execute(
-                    "UPDATE tools SET status='available', borrower=NULL, borrow_date=NULL, user_id=NULL "
+                    "UPDATE tools SET "
+                    "  status = CASE WHEN quantity + 1 > 0 THEN 'available' ELSE 'available' END,"
+                    "  quantity = quantity + 1,"
+                    "  borrower = NULL,"
+                    "  borrow_date = NULL,"
+                    "  user_id = NULL "
                     "WHERE tool_id = ?",
                     (tool_id,),
                 )
@@ -463,27 +571,42 @@ class DatabaseManager:
                 return True
         except Exception as e:
             logger.error("Error in return_tool: %s", e)
-            self.conn.rollback()
+            try:
+                self.conn.rollback()
+            except sqlite3.Error:
+                pass
             return False
 
     def fetch_borrowed_by_user(self, user_id):
         """Tools currently borrowed by a user (ownership-scoped).
 
-        Uses the tools.borrower/user_id columns (the single source of truth for
-        current ownership) rather than status, which may remain 'available'
-        for tools with quantity > 1.
+        Uses the `transactions` log as the single source of truth for active
+        borrows. A borrow is considered still active when:
+- the most recent transaction for that (tool, user) pair is a 'borrow', AND
+- the tools row still has `user_id = ?` (i.e. hasn't been returned yet).
+This avoids the multi-quantity bug where `tools.user_id` only stores the
+        latest borrower's id, silently hiding earlier still-active borrows.
         """
         return self._execute_query(
-            """SELECT result.* FROM (
-                  SELECT t.tool_id, t.name, t.status, t.borrow_date
-                  FROM tools t
-                  JOIN transactions tr ON t.tool_id = tr.tool_id
-                  WHERE tr.user_id = ? AND tr.transaction_type = 'borrow'
-                  GROUP BY t.tool_id
-               ) result
-               WHERE result.tool_id IN (
-                   SELECT tool_id FROM tools WHERE borrower IS NOT NULL AND user_id = ?
-               )""",
+            """
+            WITH last_tx AS (
+                SELECT tool_id, user_id, transaction_type,
+                       ROW_NUMBER() OVER (
+                         PARTITION BY tool_id
+                         ORDER BY transaction_id DESC
+                       ) AS rn
+                FROM transactions
+            )
+            SELECT t.tool_id, t.name, t.status, t.borrow_date
+            FROM tools t
+            JOIN last_tx lt
+              ON lt.tool_id = t.tool_id
+             AND lt.user_id = ?
+             AND lt.rn = 1
+             AND lt.transaction_type = 'borrow'
+            WHERE t.user_id = ?
+              AND t.borrower IS NOT NULL
+            """,
             (user_id, user_id),
             fetch=True,
         )

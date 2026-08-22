@@ -28,6 +28,13 @@ from matplotlib.figure import Figure
 from PIL import Image, ImageDraw, ImageTk
 
 from database import DatabaseManager
+from gui.dialogs import (
+    AdvancedToolTip,
+    AddToolDialog,
+    BorrowDialog,
+    DeleteToolDialog,
+    ReturnDialog,
+)
 from service import AuthService, ServiceError, ToolService
 
 RETURN_EVENT = "<Return>"
@@ -45,37 +52,6 @@ COLOR_TEXT_MUTED = "#a0a5b5"
 COLOR_DANGER = "#e05655"
 COLOR_DANGER_HOVER = "#c0392b"
 COLOR_SUCCESS = "#2ecc71"
-
-
-class AdvancedToolTip:
-    """Hover tooltip for treeview rows."""
-
-    def __init__(self, widget):
-        self.widget = widget
-        self.tipwindow = None
-
-    def show(self, text, x, y):
-        self.hide()
-        self.tipwindow = tw = tk.Toplevel(self.widget)
-        tw.wm_overrideredirect(True)
-        tw.wm_geometry(f"+{x}+{y}")
-        label = tk.Label(
-            tw,
-            text=text,
-            background="#23272f",
-            foreground=COLOR_ACCENT,
-            relief="solid",
-            borderwidth=1,
-            font=("Roboto", 10),
-            justify="left",
-            anchor="w",
-        )
-        label.pack(ipadx=8, ipady=4)
-
-    def hide(self):
-        if self.tipwindow:
-            self.tipwindow.destroy()
-            self.tipwindow = None
 
 
 class LoginApp:
@@ -444,6 +420,8 @@ class ToolManagementApp:
         self.stats_frame.pack(fill="x", pady=(0, 16))
 
         self.stat_cards = {}
+        self.stat_deltas = {}
+        self._prev_stats = {"total": 0, "available": 0, "borrowed": 0, "categories": 0}
         cards = [
             ("total", "📦 Total Tools", "0", COLOR_ACCENT),
             ("available", "✅ Available", "0", COLOR_SUCCESS),
@@ -465,8 +443,11 @@ class ToolManagementApp:
                 anchor="w", padx=16, pady=(14, 2)
             )
             val_lbl = ctk.CTkLabel(card, text=init_val, font=("Roboto", 24, "bold"), text_color=accent_color)
-            val_lbl.pack(anchor="w", padx=16, pady=(0, 14))
+            val_lbl.pack(anchor="w", padx=16, pady=(0, 2))
+            delta_lbl = ctk.CTkLabel(card, text="", font=("Roboto", 11), text_color=COLOR_TEXT_MUTED)
+            delta_lbl.pack(anchor="w", padx=16, pady=(0, 12))
             self.stat_cards[key] = val_lbl
+            self.stat_deltas[key] = delta_lbl
 
     def _build_controls_section(self):
         ctrl = ctk.CTkFrame(self.workspace, fg_color="transparent")
@@ -718,148 +699,24 @@ class ToolManagementApp:
 
     # -- Action Dialogs --------------------------------------------------------
     def action_borrow(self):
-        available = self.tools.available_tools()
-        if not available:
-            messagebox.showwarning("Borrow Tool", "No tools are currently available to borrow.")
-            return
-
-        tool_names = [t["name"] for t in available]
-        top = ctk.CTkToplevel(self.window)
-        top.geometry("380x280")
-        top.title("Borrow Tool")
-        top.attributes("-topmost", True)
-        top.configure(bg=COLOR_BG_DARK)
-
-        frame = ctk.CTkFrame(top, fg_color=COLOR_CARD, corner_radius=14, border_width=1, border_color=COLOR_CARD_BORDER)
-        frame.pack(fill="both", expand=True, padx=16, pady=16)
-
-        ctk.CTkLabel(frame, text="Select Tool to Borrow", font=("Roboto", 16, "bold"), text_color=COLOR_ACCENT).pack(pady=(12, 16))
-
-        tool_var = StringVar(value=tool_names[0])
-        ctk.CTkOptionMenu(frame, variable=tool_var, values=tool_names, width=280).pack(pady=8)
-
-        err_lbl = ctk.CTkLabel(frame, text="", font=("Roboto", 11), text_color=COLOR_DANGER)
-        err_lbl.pack(pady=4)
-
-        def do_borrow():
-            name = tool_var.get()
-            selected = next((t for t in available if t["name"] == name), None)
-            if not selected:
-                err_lbl.configure(text="Selected tool not found")
-                return
-            try:
-                self.tools.borrow_tool(selected["tool_id"], self.user_id)
-                top.destroy()
-                messagebox.showinfo("Success", f"'{name}' borrowed successfully!")
-                self.refresh_dashboard()
-            except ServiceError as err:
-                err_lbl.configure(text=str(err))
-
-        ctk.CTkButton(frame, text="Confirm Borrow", command=do_borrow, fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER, width=200).pack(pady=12)
+        BorrowDialog(
+            self.window, self.tools, self.user_id, self.refresh_dashboard
+        )
 
     def action_return(self):
-        borrowed = self.tools.my_borrowed_tools(self.user_id)
-        if not borrowed:
-            messagebox.showwarning("Return Tool", "You have no borrowed tools to return.")
-            return
-
-        tool_names = [t["name"] for t in borrowed]
-        top = ctk.CTkToplevel(self.window)
-        top.geometry("380x280")
-        top.title("Return Tool")
-        top.attributes("-topmost", True)
-
-        frame = ctk.CTkFrame(top, fg_color=COLOR_CARD, corner_radius=14, border_width=1, border_color=COLOR_CARD_BORDER)
-        frame.pack(fill="both", expand=True, padx=16, pady=16)
-
-        ctk.CTkLabel(frame, text="Select Tool to Return", font=("Roboto", 16, "bold"), text_color=COLOR_ACCENT).pack(pady=(12, 16))
-
-        tool_var = StringVar(value=tool_names[0])
-        ctk.CTkOptionMenu(frame, variable=tool_var, values=tool_names, width=280).pack(pady=8)
-
-        err_lbl = ctk.CTkLabel(frame, text="", font=("Roboto", 11), text_color=COLOR_DANGER)
-        err_lbl.pack(pady=4)
-
-        def do_return():
-            name = tool_var.get()
-            selected = next((t for t in borrowed if t["name"] == name), None)
-            if not selected:
-                err_lbl.configure(text="Selected tool not found")
-                return
-            try:
-                self.tools.return_tool(selected["tool_id"], self.user_id)
-                top.destroy()
-                messagebox.showinfo("Success", f"'{name}' returned successfully!")
-                self.refresh_dashboard()
-            except ServiceError as err:
-                err_lbl.configure(text=str(err))
-
-        ctk.CTkButton(frame, text="Confirm Return", command=do_return, fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER, width=200).pack(pady=12)
+        ReturnDialog(
+            self.window, self.tools, self.user_id, self.refresh_dashboard
+        )
 
     def action_add(self):
-        top = ctk.CTkToplevel(self.window)
-        top.geometry("400x420")
-        top.title("Add New Tool")
-        top.attributes("-topmost", True)
-
-        frame = ctk.CTkFrame(top, fg_color=COLOR_CARD, corner_radius=14, border_width=1, border_color=COLOR_CARD_BORDER)
-        frame.pack(fill="both", expand=True, padx=16, pady=16)
-
-        ctk.CTkLabel(frame, text="Add New Inventory Item", font=("Roboto", 16, "bold"), text_color=COLOR_ACCENT).pack(pady=(10, 12))
-
-        pad = {"fill": "x", "padx": 20, "pady": 4}
-        e_name = ctk.CTkEntry(frame, placeholder_text="Tool Name", font=("Roboto", 13))
-        e_name.pack(**pad)
-
-        e_cat = ctk.CTkEntry(frame, placeholder_text="Category", font=("Roboto", 13))
-        e_cat.pack(**pad)
-
-        e_cond = ctk.CTkEntry(frame, placeholder_text="Condition (Good/Fair/Poor)", font=("Roboto", 13))
-        e_cond.pack(**pad)
-
-        e_qty = ctk.CTkEntry(frame, placeholder_text="Quantity", font=("Roboto", 13))
-        e_qty.pack(**pad)
-
-        e_loc = ctk.CTkEntry(frame, placeholder_text="Location / Shelf", font=("Roboto", 13))
-        e_loc.pack(**pad)
-
-        err_lbl = ctk.CTkLabel(frame, text="", font=("Roboto", 11), text_color=COLOR_DANGER)
-        err_lbl.pack(pady=2)
-
-        def do_add():
-            try:
-                self.tools.add_tool(
-                    e_name.get(),
-                    e_cat.get(),
-                    e_cond.get(),
-                    e_qty.get(),
-                    e_loc.get(),
-                    actor=self.user_id,
-                )
-                top.destroy()
-                messagebox.showinfo("Success", f"Tool '{e_name.get().strip()}' added!")
-                self.refresh_dashboard()
-            except ServiceError as err:
-                err_lbl.configure(text=str(err))
-
-        ctk.CTkButton(frame, text="Save Tool", command=do_add, fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER, width=200).pack(pady=10)
+        AddToolDialog(
+            self.window, self.tools, self.user_id, self.refresh_dashboard
+        )
 
     def action_delete(self):
-        sel = self.tree.selection()
-        if not sel:
-            messagebox.showwarning("Delete Tool", "Please select a tool from the table to delete.")
-            return
-
-        values = self.tree.item(sel[0], "values")
-        tool_id, tool_name = values[0], values[1]
-
-        if messagebox.askyesno("Confirm Deletion", f"Are you sure you want to delete '{tool_name}' (ID: {tool_id})?"):
-            try:
-                self.tools.delete_tool(tool_id, actor=self.user_id)
-                messagebox.showinfo("Success", f"Tool '{tool_name}' deleted.")
-                self.refresh_dashboard()
-            except ServiceError as err:
-                messagebox.showerror("Access Denied", str(err))
+        DeleteToolDialog(
+            self.window, self.tools, self.user_id, self.refresh_dashboard, self.tree
+        )
 
     def logout(self):
         self.window.destroy()
