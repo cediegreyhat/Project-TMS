@@ -22,6 +22,7 @@ from gui.theme import (
     COLOR_DANGER,
     COLOR_TEXT_MUTED,
     COLOR_TEXT_PRIMARY,
+    F,
 )
 from service import ServiceError
 
@@ -45,7 +46,7 @@ class AdvancedToolTip:
             foreground=COLOR_ACCENT,
             relief="solid",
             borderwidth=1,
-            font=("Roboto", 10),
+            font=F(10),
             justify="left",
             anchor="w",
         )
@@ -91,7 +92,7 @@ class _BaseDialog:
 
     def _err_label(self, frame):
         lbl = ctk.CTkLabel(
-            frame, text="", font=("Roboto", 11), text_color=COLOR_DANGER
+            frame, text="", font=F(11), text_color=COLOR_DANGER
         )
         lbl.pack(pady=4)
         return lbl
@@ -124,7 +125,7 @@ class BorrowDialog(_BaseDialog):
         ctk.CTkLabel(
             frame,
             text="Select Tool to Borrow",
-            font=("Roboto", 16, "bold"),
+            font=F(16, "bold"),
             text_color=COLOR_ACCENT,
         ).pack(pady=(12, 16))
 
@@ -180,7 +181,7 @@ class ReturnDialog(_BaseDialog):
         ctk.CTkLabel(
             frame,
             text="Select Tool to Return",
-            font=("Roboto", 16, "bold"),
+            font=F(16, "bold"),
             text_color=COLOR_ACCENT,
         ).pack(pady=(12, 16))
 
@@ -224,28 +225,28 @@ class AddToolDialog(_BaseDialog):
         ctk.CTkLabel(
             frame,
             text="Add New Inventory Item",
-            font=("Roboto", 16, "bold"),
+            font=F(16, "bold"),
             text_color=COLOR_ACCENT,
         ).pack(pady=(10, 12))
 
         pad = {"fill": "x", "padx": 20, "pady": 4}
-        self.e_name = ctk.CTkEntry(frame, placeholder_text="Tool Name", font=("Roboto", 13))
+        self.e_name = ctk.CTkEntry(frame, placeholder_text="Tool Name", font=F(13))
         self.e_name.pack(**pad)
-        self.e_cat = ctk.CTkEntry(frame, placeholder_text="Category", font=("Roboto", 13))
+        self.e_cat = ctk.CTkEntry(frame, placeholder_text="Category", font=F(13))
         self.e_cat.pack(**pad)
         self.e_cond = ctk.CTkEntry(
-            frame, placeholder_text="Condition (Good/Fair/Poor)", font=("Roboto", 13)
+            frame, placeholder_text="Condition (Good/Fair/Poor)", font=F(13)
         )
         self.e_cond.pack(**pad)
-        self.e_qty = ctk.CTkEntry(frame, placeholder_text="Quantity", font=("Roboto", 13))
+        self.e_qty = ctk.CTkEntry(frame, placeholder_text="Quantity", font=F(13))
         self.e_qty.pack(**pad)
         self.e_loc = ctk.CTkEntry(
-            frame, placeholder_text="Location / Shelf", font=("Roboto", 13)
+            frame, placeholder_text="Location / Shelf", font=F(13)
         )
         self.e_loc.pack(**pad)
 
         err = ctk.CTkLabel(
-            frame, text="", font=("Roboto", 11), text_color=COLOR_DANGER
+            frame, text="", font=F(11), text_color=COLOR_DANGER
         )
         err.pack(pady=2)
 
