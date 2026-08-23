@@ -20,7 +20,7 @@ import datetime
 import logging
 import os
 import tkinter as tk
-from tkinter import StringVar, messagebox, ttk
+from tkinter import StringVar, ttk
 
 import customtkinter as ctk
 import matplotlib.pyplot as plt
@@ -360,13 +360,11 @@ class ToolManagementApp:
         self.window.mainloop()
 
     def _build_sidebar(self):
-        # User Avatar Profile
-        user_info = self.db._execute_query(
-            "SELECT name, email, is_admin FROM users WHERE id = ?", (self.user_id,), fetch=True
-        )
-        name = user_info[0]["name"] if user_info else "User"
-        email = user_info[0]["email"] if user_info else ""
-        is_admin = bool(user_info[0].get("is_admin")) if user_info else False
+        # User Avatar Profile (public seam — no raw SQL from the GUI layer)
+        user_info = self.db.fetch_user_by_id(self.user_id)
+        name = user_info["name"] if user_info else "User"
+        email = user_info["email"] if user_info else ""
+        is_admin = bool(user_info.get("is_admin")) if user_info else False
 
         profile_img_path = os.path.join("assets", "user.png")
         if os.path.exists(profile_img_path):
@@ -596,6 +594,9 @@ class ToolManagementApp:
         self._footer_loading.configure(text="● Refreshing…")
         self.window.update_idletasks()
         all_tools = self.db.fetch_all_tools()
+        # Snapshot for keystroke-driven filter updates so typing in the search
+        # box filters the cached list instead of re-hitting SQLite per keypress.
+        self._all_tools_cache = all_tools
 
         # Update Stat Cards
         total_count = len(all_tools)
@@ -649,7 +650,9 @@ class ToolManagementApp:
         self._footer_loading.configure(text=f"✓ Last refresh {stamp}")
 
     def apply_filters(self):
-        tools = self.db.fetch_all_tools()
+        tools = getattr(self, "_all_tools_cache", None)
+        if tools is None:
+            tools = self.db.fetch_all_tools()
 
         # Keyword filter
         query = self.search_entry.get().strip().lower()
@@ -827,6 +830,12 @@ class ToolManagementApp:
 
     def logout(self):
         self.window.destroy()
+        # Release this session's WAL connection before the login window opens
+        # its own DatabaseManager on the same file.
+        try:
+            self.db.close()
+        except Exception:
+            logger.warning("Failed to close DB connection on logout", exc_info=True)
         LoginApp(self.db_path)
 
 

@@ -146,7 +146,7 @@ class DatabaseManager:
             logger.error("Failed to create tables or indexes: %s", e)
             raise
 
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
 
     def _migrate(self):
         """Apply versioned, idempotent schema migrations.
@@ -184,6 +184,22 @@ class DatabaseManager:
                 self.conn.commit()
                 logger.info("Migrated users table to v1 (added is_admin, created_at).")
 
+            # v2 → v3: enforce case-insensitive unique tool names so GUI
+            # dropdowns keyed by display string stay unambiguous. Any
+            # pre-existing duplicates are suffixed with their row id first,
+            # otherwise the unique index creation would fail.
+            if current < 2:
+                self.conn.execute(
+                    "UPDATE tools SET name = name || ' (#' || tool_id || ')' "
+                    "WHERE rowid NOT IN ("
+                    "SELECT MIN(rowid) FROM tools GROUP BY name COLLATE NOCASE)"
+                )
+                self.conn.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS "
+                    "idx_tools_name_nocase ON tools(name COLLATE NOCASE)"
+                )
+                logger.info("Migrated schema to v3 (case-insensitive unique tool names).")
+
             # Mark current schema version.
             if current < self.SCHEMA_VERSION:
                 self.conn.execute(
@@ -194,6 +210,8 @@ class DatabaseManager:
                 logger.info("Schema version set to %s.", self.SCHEMA_VERSION)
         except sqlite3.Error as e:
             logger.error("Migration failed: %s", e)
+            # Refuse to run against a half-migrated schema.
+            raise
 
     # -- Generic query helper ----------------------------------------------------
     def _execute_query(self, query, params=None, fetch=False):
@@ -265,6 +283,23 @@ class DatabaseManager:
             (username, datetime.datetime.now().isoformat()),
         )
 
+    # Constant-cost comparison target for unknown usernames so "user does
+    # not exist" responses cost the same as real ones (blocks username
+    # enumeration via response-time side channel).
+    _DUMMY_HASH = None
+
+    def _dummy_hash(self):
+        """Lazily build the constant-time comparison hash (once per process)."""
+        if DatabaseManager._DUMMY_HASH is None:
+            DatabaseManager._DUMMY_HASH = bcrypt.hashpw(
+                b"timing-equalizer", bcrypt.gensalt()
+            )
+        return DatabaseManager._DUMMY_HASH
+
+    def is_locked_out(self, username):
+        """True when the username hit the failed-attempt ceiling."""
+        return self._too_many_attempts(username)
+
     def _cleanup_login_attempts(self):
         """Purge login_attempts rows older than the rate-limit window.
 
@@ -290,7 +325,9 @@ class DatabaseManager:
             self._execute_query(
                 "INSERT INTO users (username, password, name, age, email, is_admin) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
-                (username, hashed_pw, name, age, email, 1 if is_admin else 0),
+                # Store TEXT (not raw bytes) so the column type matches the
+                # declared schema and str/bytes handling stays uniform.
+                (username, hashed_pw.decode("utf-8"), name, age, email, 1 if is_admin else 0),
             )
             logger.info("Inserted user: %s", username)
             return True
@@ -306,6 +343,9 @@ class DatabaseManager:
 
         Rate limiting applies here.
         """
+        # Purge expired rows on failed attempts too, so hammering a name
+        # that never logs in successfully doesn't grow the table forever.
+        self._cleanup_login_attempts()
         if self._too_many_attempts(username):
             logger.warning("Login rate-limited for username %s", username)
             return None
@@ -313,6 +353,9 @@ class DatabaseManager:
             "SELECT * FROM users WHERE username = ?", (username,), fetch=True
         )
         if not user_rows:
+            # Burn the same bcrypt cost as a real check before failing so
+            # response timing does not reveal whether the username exists.
+            bcrypt.checkpw(password.encode("utf-8"), self._dummy_hash())
             self._record_attempt(username)
             return None
         user = user_rows[0]
@@ -386,13 +429,15 @@ class DatabaseManager:
         self.ensure_connection_open()
         try:
             with closing(self.conn.cursor()) as cursor:
-                cursor.execute("DELETE FROM tools WHERE tool_id = ?", (tool_id,))
-                if cursor.rowcount == 0:
-                    raise ValueError(f"Tool with ID {tool_id} does not exist.")
-                # Also purge related transactions to keep referential integrity.
+                # Purge child rows FIRST — with foreign_keys=ON, deleting the
+                # parent first raises IntegrityError for any tool that has
+                # transaction history, making it permanently undeletable.
                 cursor.execute(
                     "DELETE FROM transactions WHERE tool_id = ?", (tool_id,)
                 )
+                cursor.execute("DELETE FROM tools WHERE tool_id = ?", (tool_id,))
+                if cursor.rowcount == 0:
+                    raise ValueError(f"Tool with ID {tool_id} does not exist.")
                 self.conn.commit()
                 logger.info("Tool %s deleted (and its transactions purged).", tool_id)
                 return True
@@ -401,14 +446,15 @@ class DatabaseManager:
             self.conn.rollback()
             return False
 
-    def clear_tables(self, actor_id=None):
+    def clear_tables(self, actor_id):
         """Clear tools and transactions tables (admin-only operation).
 
         Defense-in-depth: the service layer already gates this, but the DB
         layer enforces admin here too so any caller bypassing the service
-        still hits the check.
+        still hits the check. ``actor_id`` is MANDATORY — omitting it must
+        never silently skip the authorization check.
         """
-        if actor_id is not None and not self.is_admin(actor_id):
+        if not self.is_admin(actor_id):
             logger.warning("clear_tables DENIED for user %s (not admin).", actor_id)
             return False
         self.ensure_connection_open()
@@ -437,6 +483,31 @@ class DatabaseManager:
         )
         return rows[0] if rows else None
 
+    def tool_name_exists(self, name):
+        """Case-insensitive tool-name existence check (public seam)."""
+        rows = self._execute_query(
+            "SELECT 1 FROM tools WHERE name = ? COLLATE NOCASE LIMIT 1",
+            (name,),
+            fetch=True,
+        )
+        return bool(rows)
+
+    def fetch_user_by_id(self, user_id):
+        """Public seam for user lookups (service + presentation layers)."""
+        rows = self._execute_query(
+            "SELECT * FROM users WHERE id = ?", (user_id,), fetch=True
+        )
+        return rows[0] if rows else None
+
+    def username_exists(self, username):
+        """Case-insensitive username existence check (public seam)."""
+        rows = self._execute_query(
+            "SELECT 1 FROM users WHERE username = ? COLLATE NOCASE LIMIT 1",
+            (username,),
+            fetch=True,
+        )
+        return bool(rows)
+
     def fetch_tools_by_status(self, status, user_id=None):
         """Return tools whose `status` column matches the requested value.
 
@@ -453,10 +524,13 @@ class DatabaseManager:
         return self._execute_query(query, tuple(params), fetch=True)
 
     def fetch_borrowable_tools(self):
-        """Tools that have at least one unit free to be borrowed now.
+        """Tools that can be borrowed right now.
 
-        'Available' with quantity semantics — includes multi-quantity tools
-        whose status reads 'borrowed' but still have stock remaining.
+        NOTE: the schema models ONE concurrent borrower per tool (the
+        ``user_id`` ownership column). Quantity tracks total stock, not
+        concurrent loans — a tool whose status reads 'borrowed' has NO free
+        units for anyone else until its holder returns it, regardless of
+        the remaining ``quantity``.
         """
         return self._execute_query(
             "SELECT tool_id, name, status, quantity FROM tools WHERE quantity > 0 AND user_id IS NULL",
@@ -519,6 +593,15 @@ class DatabaseManager:
                 self.conn.commit()
                 logger.info("Tool %s borrowed by user %s", tool_id, user_id)
                 return True
+        except ValueError:
+            # Documented contract failure (unavailable / already borrowed /
+            # missing) — propagate so callers can distinguish it from a raw
+            # infrastructure error instead of collapsing everything to False.
+            try:
+                self.conn.rollback()
+            except sqlite3.Error:
+                pass
+            raise
         except Exception as e:
             logger.error("Error in borrow_tool: %s", e)
             try:
@@ -553,7 +636,7 @@ class DatabaseManager:
                     return False
                 cursor.execute(
                     "UPDATE tools SET "
-                    "  status = CASE WHEN quantity + 1 > 0 THEN 'available' ELSE 'available' END,"
+                    "  status = 'available',"
                     "  quantity = quantity + 1,"
                     "  borrower = NULL,"
                     "  borrow_date = NULL,"

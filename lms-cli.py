@@ -1,8 +1,8 @@
 """Project-LMS Command-Line Interface."""
 
-import datetime
 import getpass
-import re
+import os
+import sqlite3
 import traceback
 
 from colorama import Fore, Style, init
@@ -12,16 +12,9 @@ from service import ServiceError, ToolService
 
 init(autoreset=True)
 
-# SQL keywords that are NOT allowed in the CLI read-only console.
-# Any statement that *starts with* one of these prefixes is rejected before
-# it ever reaches sqlite3, eliminating the trivially-bypassed prefix-only
-# check that a previous version relied on.
-_BLOCKED_SQL_KEYWORDS = (
-    "insert", "update", "delete", "drop", "alter", "create", "replace",
-    "truncate", "attach", "detach", "vacuum", "pragma writable",
-    "pragma writable_schema", "reindex", "savepoint", "release",
-    "rollback", "commit", "begin", "end", "grant", "revoke",
-)
+# Console safety comes from the CONNECTION, not keyword filtering: queries
+# run on a dedicated read-only SQLite connection (mode=ro + PRAGMA
+# query_only), so destructive statements fail at the engine level.
 
 
 def print_banner():
@@ -68,6 +61,8 @@ def print_table(rows, headers=None):
         print(Fore.YELLOW + "No data to display." + Style.RESET_ALL)
         return
     headers, data = _prepare_table_data(rows, headers)
+    if not headers:  # tuple rows with no headers supplied
+        headers = [f"Col{i+1}" for i in range(len(data[0]))]
     col_widths = [len(str(h)) for h in headers]
     for row in data:
         for i, cell in enumerate(row):
@@ -123,9 +118,9 @@ def handle_add_tool(svc, session):
         print(Fore.RED + f"Error adding tool: {e}" + Style.RESET_ALL)
 
 
-def handle_view_tools(db):
+def handle_view_tools(svc):
     try:
-        tools = db.fetch_all_tools()
+        tools = svc.all_tools()
         if not tools:
             print(Fore.YELLOW + "No tools found in the inventory.")
             return
@@ -176,50 +171,38 @@ def handle_delete_tool(svc, session):
         print(Fore.RED + f"Error deleting tool: {e}" + Style.RESET_ALL)
 
 
-def handle_borrow_tool(db, session):
+def handle_borrow_tool(svc, session):
     try:
-        available_tools = db.fetch_tools_by_status("available")
+        available_tools = svc.available_tools()
         if not available_tools:
             print(Fore.YELLOW + "No tools are currently available for borrowing." + Style.RESET_ALL)
             return
         print(Fore.CYAN + "\nAvailable Tools for Borrowing:")
         print_table(available_tools, ["tool_id", "name", "status", "quantity"])
         tool_id = get_valid_int("Enter the Tool ID to borrow: ")
-        # Quantity + ownership semantics: a tool is fully free iff stock > 0
-        # AND no one currently holds a unit. This is the right "available"
-        # signal for both single-unit and multi-quantity tools.
-        selected = db.fetch_tool_by_id(tool_id)
-        if not selected or selected["quantity"] <= 0 or selected.get("user_id") is not None:
-            print(Fore.RED + "Invalid selection. The tool is either unavailable or does not exist." + Style.RESET_ALL)
-            return
-        borrower_name = session.username
-        borrow_date = datetime.date.today().isoformat()
-        if db.borrow_tool(tool_id, session.user_id, borrower_name, borrow_date):
-            print(Fore.GREEN + f"Tool '{selected['name']}' borrowed successfully!" + Style.RESET_ALL)
-        else:
-            print(Fore.RED + "Failed to borrow tool." + Style.RESET_ALL)
+        # Routed through the service layer so availability rules live in ONE
+        # place and borrower attribution matches GUI borrows.
+        svc.borrow_tool(tool_id, session.user_id)
+        print(Fore.GREEN + "Tool borrowed successfully!" + Style.RESET_ALL)
+    except ServiceError as e:
+        print(Fore.RED + str(e) + Style.RESET_ALL)
     except Exception as e:
         print(Fore.RED + f"Error borrowing tool: {e}" + Style.RESET_ALL)
 
 
-def handle_return_tool(db, session):
+def handle_return_tool(svc, session):
     try:
-        borrowed = db.fetch_borrowed_by_user(session.user_id)
+        borrowed = svc.my_borrowed_tools(session.user_id)
         if not borrowed:
             print(Fore.YELLOW + "You have no borrowed tools to return." + Style.RESET_ALL)
             return
         print(Fore.CYAN + "\nYour Borrowed Tools:")
         print_table(borrowed, ["tool_id", "name", "status", "borrow_date"])
         tool_id = get_valid_int("Enter the Tool ID to return: ")
-        owned_ids = [t["tool_id"] for t in borrowed]
-        if tool_id not in owned_ids:
-            print(Fore.RED + "Access denied: you can only return tools you borrowed." + Style.RESET_ALL)
-            return
-        return_date = datetime.date.today().isoformat()
-        if db.return_tool(tool_id, session.user_id, return_date):
-            print(Fore.GREEN + f"Tool {tool_id} returned successfully!" + Style.RESET_ALL)
-        else:
-            print(Fore.RED + "Failed to return tool (not owned or already returned)." + Style.RESET_ALL)
+        svc.return_tool(tool_id, session.user_id)
+        print(Fore.GREEN + f"Tool {tool_id} returned successfully!" + Style.RESET_ALL)
+    except ServiceError as e:
+        print(Fore.RED + str(e) + Style.RESET_ALL)
     except Exception as e:
         print(Fore.RED + f"Error returning tool: {e}" + Style.RESET_ALL)
 
@@ -267,14 +250,24 @@ def handle_execute_sql(db, session):
         print(Fore.RED + "Blocked: statement must start with SELECT, PRAGMA, EXPLAIN, or WITH.")
         return
     
-    # Keyword-based safeguard: block destructive operations even in subqueries or multi-statements.
-    for word in _BLOCKED_SQL_KEYWORDS:
-        if re.search(rf"\b{re.escape(word)}\b", stripped):
-            print(Fore.RED + f"Blocked: forbidden keyword '{word}' detected.")
-            return
-    
+    # Safety comes from the CONNECTION, not keywords: mode=ro + query_only
+    # makes any write fail at the engine level (even via ATTACH'd files), and
+    # cursor.execute() refuses multi-statement strings outright. This replaces
+    # the old deny-list that false-positived on SELECTs using CASE…END or
+    # replace().
     try:
-        results = db._execute_query(sql_command, fetch=True)
+        db_path = os.path.abspath(db.db_path).replace("\\", "/")
+        ro_conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=10)
+        ro_conn.row_factory = sqlite3.Row
+        ro_conn.execute("PRAGMA query_only = ON")
+        try:
+            cur = ro_conn.execute(sql_command)
+            results = [
+                dict(r) if hasattr(r, "keys") else tuple(r) for r in cur.fetchall()
+            ]
+        finally:
+            ro_conn.close()
+
         if not results:
             print(Fore.YELLOW + "No results found.")
         else:
@@ -292,6 +285,13 @@ def account_login(db):
     print(Fore.YELLOW + "=== Login ===")
     username = get_valid_str("Enter username: ")
     password = getpass.getpass("Enter password: ")
+    if db.is_locked_out(username):
+        print(
+            Fore.RED
+            + "Account temporarily locked after repeated failed attempts. Try again later."
+            + Style.RESET_ALL
+        )
+        return None
     user = db.authenticate(username, password)
     if user:
         print(Fore.GREEN + "Login successful!" + Style.RESET_ALL)
@@ -343,15 +343,15 @@ if __name__ == "__main__":
             if choice == "1":
                 handle_add_tool(svc, session)
             elif choice == "2":
-                handle_view_tools(db)
+                handle_view_tools(svc)
             elif choice == "3":
                 handle_update_tool(svc, session)
             elif choice == "4":
                 handle_delete_tool(svc, session)
             elif choice == "5":
-                handle_borrow_tool(db, session)
+                handle_borrow_tool(svc, session)
             elif choice == "6":
-                handle_return_tool(db, session)
+                handle_return_tool(svc, session)
             elif choice == "7":
                 handle_search_tools(svc)
             elif choice == "8":

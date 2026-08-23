@@ -102,3 +102,55 @@ class TestToolServiceBorrowReturn:
         bad = tools.search_tools("Broken")[0]["tool_id"]
         with pytest.raises(ServiceError):
             tools.borrow_tool(bad, regular_user)
+
+
+# ---------------------------------------------------------------------------
+# Regression tests from code review (Q7 update-validation coverage gap)
+# ---------------------------------------------------------------------------
+
+
+class TestToolServiceUpdateValidation:
+    def test_update_rejects_bad_condition(self, tools, admin_user):
+        tools.add_tool("Hammer", "Tools", "Good", 5, "Shelf A", actor=admin_user)
+        tid = tools.search_tools("Hammer")[0]["tool_id"]
+        with pytest.raises(ServiceError):
+            tools.update_tool(tid, actor=admin_user, condition="Broken")
+
+    def test_update_rejects_negative_quantity(self, tools, admin_user):
+        tools.add_tool("Hammer", "Tools", "Good", 5, "Shelf A", actor=admin_user)
+        tid = tools.search_tools("Hammer")[0]["tool_id"]
+        with pytest.raises(ServiceError):
+            tools.update_tool(tid, actor=admin_user, quantity=-3)
+
+    def test_update_requires_admin(self, tools, admin_user, regular_user):
+        tools.add_tool("Hammer", "Tools", "Good", 5, "Shelf A", actor=admin_user)
+        tid = tools.search_tools("Hammer")[0]["tool_id"]
+        with pytest.raises(ServiceError):
+            tools.update_tool(tid, actor=regular_user, location="Shelf Z")
+        with pytest.raises(ServiceError):
+            tools.update_tool(tid, actor=None, location="Shelf Z")
+
+    def test_update_accepts_valid_fields(self, tools, admin_user):
+        tools.add_tool("Hammer", "Tools", "Good", 5, "Shelf A", actor=admin_user)
+        tid = tools.search_tools("Hammer")[0]["tool_id"]
+        assert tools.update_tool(
+            tid, actor=admin_user, condition="fair", quantity=7, location="Shelf Z"
+        )
+        row = tools.search_tools("Hammer")[0]
+        assert row["condition"] == "Fair"
+        assert row["quantity"] == 7
+        assert row["location"] == "Shelf Z"
+
+    def test_duplicate_tool_name_case_insensitive(self, tools, admin_user):
+        tools.add_tool("Hammer", "Tools", "Good", 5, "Shelf A", actor=admin_user)
+        with pytest.raises(ServiceError):
+            tools.add_tool("HAMMER", "Tools", "Good", 2, "Shelf B", actor=admin_user)
+
+    def test_service_borrow_attributes_username(self, tools, admin_user, regular_user):
+        tools.add_tool("Saw", "Tools", "Good", 1, "Shelf B", actor=admin_user)
+        tid = tools.search_tools("Saw")[0]["tool_id"]
+        assert tools.borrow_tool(tid, regular_user)
+        # Borrower attribution must carry the username (not ""), so GUI
+        # tooltips work for service-layer borrows too.
+        row = tools.db.fetch_tool_by_id(tid)
+        assert row["borrower"] == "userx"

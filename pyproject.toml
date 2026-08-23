@@ -21,6 +21,7 @@ dev = ["pytest"]
 
 [tool.setuptools]
 py-modules = ["database", "service"]
+packages = ["gui"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

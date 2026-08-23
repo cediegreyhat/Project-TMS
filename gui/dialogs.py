@@ -117,7 +117,9 @@ class BorrowDialog(_BaseDialog):
             return
 
         self._tools = available
-        tool_names = [t["name"] for t in available]
+        # Prefix labels with tool IDs so duplicate names can never make the
+        # dropdown resolve to the wrong row.
+        tool_names = [f"#{t['tool_id']} · {t['name']}" for t in available]
 
         ctk.CTkLabel(
             frame,
@@ -134,14 +136,17 @@ class BorrowDialog(_BaseDialog):
         err = self._err_label(frame)
 
         def do_borrow():
-            name = self._tool_var.get()
-            selected = next((t for t in self._tools if t["name"] == name), None)
+            label = self._tool_var.get()
+            selected = next(
+                (t for t in self._tools if f"#{t['tool_id']} · {t['name']}" == label),
+                None,
+            )
             if not selected:
                 err.configure(text="Selected tool not found")
                 return
             try:
                 self.tools.borrow_tool(selected["tool_id"], self.user_id)
-                self._success(f"'{name}' borrowed successfully!")
+                self._success(f"'{selected['name']}' borrowed successfully!")
             except ServiceError as ex:
                 err.configure(text=str(ex))
 
@@ -169,7 +174,8 @@ class ReturnDialog(_BaseDialog):
             return
 
         self._tools = borrowed
-        tool_names = [t["name"] for t in borrowed]
+        # ID-prefixed labels — same duplicate-name protection as BorrowDialog.
+        tool_names = [f"#{t['tool_id']} · {t['name']}" for t in borrowed]
 
         ctk.CTkLabel(
             frame,
@@ -186,14 +192,17 @@ class ReturnDialog(_BaseDialog):
         err = self._err_label(frame)
 
         def do_return():
-            name = self._tool_var.get()
-            selected = next((t for t in self._tools if t["name"] == name), None)
+            label = self._tool_var.get()
+            selected = next(
+                (t for t in self._tools if f"#{t['tool_id']} · {t['name']}" == label),
+                None,
+            )
             if not selected:
                 err.configure(text="Selected tool not found")
                 return
             try:
                 self.tools.return_tool(selected["tool_id"], self.user_id)
-                self._success(f"'{name}' returned successfully!")
+                self._success(f"'{selected['name']}' returned successfully!")
             except ServiceError as ex:
                 err.configure(text=str(ex))
 
@@ -279,6 +288,11 @@ class DeleteToolDialog:
             return
         values = tree.item(sel[0], "values")
         tool_id, tool_name = values[0], values[1]
+        if not tool_id:  # placeholder "No tools match…" row
+            messagebox.showwarning(
+                "Delete Tool", "Please select a real tool row to delete."
+            )
+            return
         if not messagebox.askyesno(
             "Confirm Deletion",
             f"Are you sure you want to delete '{tool_name}' (ID: {tool_id})?",

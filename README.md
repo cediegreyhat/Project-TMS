@@ -159,11 +159,13 @@ two-interface search-and-replace.
 python -m pytest tests/ -q
 ```
 
-Currently **32 tests pass**, covering:
+Currently **43 tests pass**, covering:
 
 - **Database layer** — auth round-trip, duplicate-user rejection, partial
-  updates, deletion with cascading transactions, pagination, case-insensitive
-  search, login rate limiting, ownership-checked borrow/return.
+  updates, deletion of ever-borrowed tools (child rows purged before parent),
+  multi-quantity borrow/return status transitions, pagination,
+  case-insensitive search, login rate limiting (including unknown usernames),
+  ownership-checked borrow/return.
 - **Service layer** — RBAC matrix (admin vs non-admin × add/update/delete/clear),
   input validation (condition enum, quantity sign, duplicate name, bad email,
   bad age), borrow-then-twice, return-others-tool.
@@ -190,21 +192,21 @@ cover the behavior the GUI delegates to.
   fragment is the column-name list in `update_tool`, and the column names come
   from a hard-coded `allowed` set in the DB layer (defense-in-depth on top of
   service-layer RBAC).
-- **CLI SQL console** is admin-only and read-only — `SELECT`, `PRAGMA`,
-  `EXPLAIN`, `WITH` only; destructive keywords (`INSERT`, `UPDATE`, `DELETE`,
-  `DROP`, `ALTER`, `CREATE`, `REPLACE`, `TRUNCATE`, `ATTACH`, `DETACH`,
-  `VACUUM`, `PRAGMA writable*`, `REINDEX`, `SAVEPOINT`, `RELEASE`,
-  `ROLLBACK`, `COMMIT`, `BEGIN`, `END`, `GRANT`, `REVOKE`) are blocked by
-  regex even inside subqueries.
+- **CLI SQL console** is admin-only and read-only — statements must start
+  with `SELECT`, `PRAGMA`, `EXPLAIN`, or `WITH`, and execution happens on a
+  dedicated read-only SQLite connection (`mode=ro` + `PRAGMA query_only`),
+  so destructive statements fail at the engine level instead of relying on
+  keyword filtering.
 - **RBAC** is enforced at both the service layer (where business rules live)
-  *and* the DB layer (`clear_tables` re-checks `is_admin`), so a caller that
+  *and* the DB layer (`clear_tables` re-checks `is_admin`; its actor argument
+  is mandatory so omitting it can never skip the check), so a caller that
   bypasses the service still hits the gate.
 
 ---
 
 ## **Technology Stack**
 
-- **Language:** Python 3.10+
+- **Language:** Python 3.9+
 - **GUI:** `customtkinter`, `tkinter.ttk` (Treeview), `PIL` (background images, avatar)
 - **Charts:** `matplotlib` (Figure + FigureCanvasTkAgg, donut chart of category counts)
 - **Database:** SQLite (WAL mode, `sqlite3.Row` factory)

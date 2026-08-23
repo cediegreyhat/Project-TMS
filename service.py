@@ -62,9 +62,10 @@ class ToolService:
         name, category, cond, qty, location = self._validate_tool_inputs(
             name, category, condition, quantity, location
         )
-        # Duplicate name guard (case-insensitive).
-        existing = self.db.fetch_tool_by_name(name)
-        if existing:
+        # Duplicate name guard — genuinely case-insensitive via COLLATE NOCASE
+        # so 'Hammer' and 'HAMMER' cannot coexist (the GUI resolves tools by
+        # display name, so duplicates would make selection ambiguous).
+        if self.db.tool_name_exists(name):
             raise ServiceError("A tool with this name already exists.")
         try:
             return self.db.add_tool(name, category, cond, qty, location)
@@ -73,9 +74,31 @@ class ToolService:
             raise ServiceError("Could not add the tool. Please try again.") from e
 
     def update_tool(self, tool_id, actor, **fields):
-        """Update a tool's fields. Requires admin unless actor is None."""
-        if actor is not None and not self.db.is_admin(actor):
+        """Update a tool's fields. Admin-only; ``actor`` is mandatory."""
+        # Unlike add/delete (which allow actor=None for seeding/tests), update
+        # has no legitimate unauthenticated path — omitting the actor must
+        # never silently skip the authorization check.
+        if not actor or not self.db.is_admin(actor):
             raise ServiceError("Only admins can update tools.")
+        if not fields:
+            return True
+        if "condition" in fields:
+            cond = (str(fields["condition"] or "")).strip().capitalize()
+            if cond not in VALID_CONDITIONS:
+                raise ServiceError(
+                    f"Condition must be one of: {', '.join(VALID_CONDITIONS)}."
+                )
+            fields["condition"] = cond
+        if "quantity" in fields:
+            try:
+                fields["quantity"] = int(fields["quantity"])
+            except (TypeError, ValueError):
+                raise ServiceError("Quantity must be a whole number.")
+            if fields["quantity"] < 0:
+                raise ServiceError("Quantity cannot be negative.")
+        unknown = set(fields) - {"name", "category", "condition", "quantity", "location"}
+        if unknown:
+            raise ServiceError(f"Unknown field(s): {', '.join(sorted(unknown))}")
         if not self.db.fetch_tool_by_id(tool_id):
             raise ServiceError("Tool not found.")
         try:
@@ -118,8 +141,17 @@ class ToolService:
         if tool_id in held:
             raise ServiceError("You already hold this tool.")
         date = borrow_date or datetime.date.today().isoformat()
+        # Attribute the borrow to a real username (not "") so GUI tooltips
+        # reading tools.borrower work for service-layer borrows too.
+        user = self.db.fetch_user_by_id(user_id)
+        borrower = (user.get("username") if user else "") or ""
         try:
-            ok = self.db.borrow_tool(tool_id, user_id, "", date)
+            ok = self.db.borrow_tool(tool_id, user_id, borrower, date)
+        except ValueError as e:
+            # Distinguishable contract failure from the DB layer (unavailable /
+            # already borrowed / insufficient stock).
+            logger.info("borrow_tool rejected for tool %s: %s", tool_id, e)
+            raise ServiceError("Tool is unavailable or quantity is insufficient.") from e
         except Exception as e:
             # Never let a raw sqlite3 / DB-layer message reach the GUI; the
             # user-facing wording lives here.
@@ -148,15 +180,20 @@ class ToolService:
         return self.db.fetch_borrowed_by_user(user_id)
 
     def available_tools(self):
-        """Tools with at least one unit free to borrow (quantity > 0, no owner)."""
+        """Tools that can be borrowed right now (unowned, stock > 0)."""
         return self.db.fetch_borrowable_tools()
+
+    def all_tools(self):
+        """Full inventory snapshot (public seam for presentation layers)."""
+        return self.db.fetch_all_tools()
 
     # -- Admin --------------------------------------------------------------------
     def clear_inventory(self, actor):
         """Clear all tools and transactions. Admin-only."""
         if not self.db.is_admin(actor):
             raise ServiceError("Only admins can clear the inventory.")
-        return self.db.clear_tables()
+        # Actor forwarded so the DB-layer defense-in-depth gate is real.
+        return self.db.clear_tables(actor)
 
 
 class AuthService:
@@ -190,10 +227,7 @@ class AuthService:
         if "@" not in email or "." not in email:
             raise ServiceError("Enter a valid email address.")
         # Duplicate username check with a user-facing message.
-        existing = self.db._execute_query(
-            "SELECT id FROM users WHERE username = ?", (username,), fetch=True
-        )
-        if existing:
+        if self.db.username_exists(username):
             raise ServiceError("Username already exists. Please choose another.")
         ok = self.db.insert_user(username, password, name, age, email, is_admin=0)
         if not ok:
@@ -201,6 +235,12 @@ class AuthService:
         return True
 
     def login(self, username, password):
+        # Check lockout first so rate-limited users get an accurate message
+        # instead of being told their credentials were wrong.
+        if self.db.is_locked_out(username or ""):
+            raise ServiceError(
+                "Too many failed attempts. Please wait ~10 minutes and retry."
+            )
         user = self.db.authenticate(username, password)
         if not user:
             raise ServiceError("Incorrect username or password.")
