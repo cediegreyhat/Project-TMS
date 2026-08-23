@@ -547,7 +547,7 @@ class ToolManagementApp:
 
         self.tooltip = AdvancedToolTip(self.tree)
         self.tree.bind("<Motion>", self._on_tree_motion)
-        self.tree.bind("<Leave>", lambda e: self.tooltip.hide())
+        self.tree.bind("<Leave>", self._on_tree_leave)
 
     def _build_chart_section(self):
         self.chart_card = ctk.CTkFrame(
@@ -736,6 +736,12 @@ class ToolManagementApp:
             self.tooltip.show(self._row_tooltips[item], x, y)
         else:
             self.tooltip.hide()
+
+    def _on_tree_leave(self, event):
+        # Reset the cache so re-entering the same row re-shows the tooltip;
+        # the Motion handler alone would early-return on an unchanged row.
+        self._last_tooltip_row = None
+        self.tooltip.hide()
 
     def _update_donut_chart(self, tools):
         # Close any prior figure to release its memory; otherwise repeated

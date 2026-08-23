@@ -16,9 +16,12 @@ the seam for business rules.
 """
 
 import datetime
+import logging
 
 # Allowed enum for tool condition (kept single-source here).
 VALID_CONDITIONS = ("Good", "Fair", "Poor")
+
+logger = logging.getLogger("project_lms.service")
 
 
 class ServiceError(Exception):
@@ -63,7 +66,11 @@ class ToolService:
         existing = self.db.fetch_tool_by_name(name)
         if existing:
             raise ServiceError("A tool with this name already exists.")
-        return self.db.add_tool(name, category, cond, qty, location)
+        try:
+            return self.db.add_tool(name, category, cond, qty, location)
+        except Exception as e:
+            logger.exception("DB error in add_tool(name=%r)", name)
+            raise ServiceError("Could not add the tool. Please try again.") from e
 
     def update_tool(self, tool_id, actor, **fields):
         """Update a tool's fields. Requires admin unless actor is None."""
@@ -71,13 +78,21 @@ class ToolService:
             raise ServiceError("Only admins can update tools.")
         if not self.db.fetch_tool_by_id(tool_id):
             raise ServiceError("Tool not found.")
-        return self.db.update_tool(tool_id, **fields)
+        try:
+            return self.db.update_tool(tool_id, **fields)
+        except Exception as e:
+            logger.exception("DB error in update_tool(tool_id=%s)", tool_id)
+            raise ServiceError("Could not update the tool. Please try again.") from e
 
     def delete_tool(self, tool_id, actor=None):
         """Delete a tool. Requires admin unless actor is None (seed/test)."""
         if actor is not None and not self.db.is_admin(actor):
             raise ServiceError("Only admins can delete tools.")
-        return self.db.delete_tool(tool_id)
+        try:
+            return self.db.delete_tool(tool_id)
+        except Exception as e:
+            logger.exception("DB error in delete_tool(tool_id=%s)", tool_id)
+            raise ServiceError("Could not delete the tool. Please try again.") from e
 
     def list_tools(self, page=1, page_size=20):
         return self.db.fetch_tools_paginated(page, page_size)
@@ -108,7 +123,8 @@ class ToolService:
         except Exception as e:
             # Never let a raw sqlite3 / DB-layer message reach the GUI; the
             # user-facing wording lives here.
-            raise ServiceError(f"Database error while borrowing: {e}")
+            logger.exception("DB error in borrow_tool(tool_id=%s, user_id=%s)", tool_id, user_id)
+            raise ServiceError("Could not borrow the tool. Please try again.") from e
         if not ok:
             raise ServiceError("Failed to borrow tool. It may have just become unavailable.")
         return True
@@ -122,7 +138,8 @@ class ToolService:
         try:
             ok = self.db.return_tool(tool_id, user_id, date)
         except Exception as e:
-            raise ServiceError(f"Database error while returning: {e}")
+            logger.exception("DB error in return_tool(tool_id=%s, user_id=%s)", tool_id, user_id)
+            raise ServiceError("Could not return the tool. Please try again.") from e
         if not ok:
             raise ServiceError("Failed to return tool (already returned or not owned).")
         return True

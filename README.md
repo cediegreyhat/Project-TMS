@@ -83,7 +83,7 @@ Project-LMS/
 ## **Installation and Usage**
 
 ### Prerequisites
-- **Python 3.10+** (uses `match`/`case` patterns in spirit; tested on 3.13)
+- **Python 3.9+** (matches `pyproject.toml` `requires-python`; tested on 3.13)
 - **SQLite ≥ 3.25** (the borrow-history query uses `ROW_NUMBER() OVER`)
 - Linux, macOS, or Windows
 
