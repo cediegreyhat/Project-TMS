@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "project-lms"
+name = "project-tms"
 version = "2.0.0"
-description = "Learner's/Tool Management System — GUI + CLI with RBAC and SQLite persistence."
+description = "Tool Management System (TMS) — GUI + CLI with RBAC and SQLite persistence."
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
